@@ -1,26 +1,78 @@
 frappe.provide("frappe.views");
 
+// Minimal SVG element factory (the gantt library's own createSVG is not exported).
+function svg_el(tag, attrs, parent) {
+	const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+	Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+	if (parent) parent.appendChild(el);
+	return el;
+}
+
 frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	get view_name() {
 		return "Gantt";
 	}
 
 	setup_defaults() {
-		return super.setup_defaults().then(() => {
-			this.page_title = this.page_title + " " + __("Gantt");
-			this.calendar_settings = frappe.views.calendar[this.doctype] || {};
+		return super
+			.setup_defaults()
+			.then(() => {
+				this.page_title = this.page_title + " " + __("Gantt");
+				this.calendar_settings = frappe.views.calendar[this.doctype] || {};
 
-			if (typeof this.calendar_settings.gantt == "object") {
-				Object.assign(this.calendar_settings, this.calendar_settings.gantt);
-			}
+				if (typeof this.calendar_settings.gantt == "object") {
+					Object.assign(this.calendar_settings, this.calendar_settings.gantt);
+				}
 
-			if (this.calendar_settings.order_by) {
-				this.sort_by = this.calendar_settings.order_by;
-				this.sort_order = "asc";
-			} else {
-				this.sort_by =
-					this.view_user_settings.sort_by || this.calendar_settings.field_map.start;
-				this.sort_order = this.view_user_settings.sort_order || "asc";
+				if (this.calendar_settings.order_by) {
+					this.sort_by = this.calendar_settings.order_by;
+					this.sort_order = "asc";
+				} else {
+					this.sort_by =
+						this.view_user_settings.sort_by || this.calendar_settings.field_map.start;
+					this.sort_order = this.view_user_settings.sort_order || "asc";
+				}
+			})
+			.then(() => this.setup_dependency_config());
+	}
+
+	// Dependency editing (avn-main): which child table on this doctype holds the predecessor
+	// links. Explicit: frappe.views.calendar[dt].depends_on_table =
+	//   { child_doctype, parentfield, link_field }
+	// Otherwise the first Table field whose child doctype carries a Link back to this doctype
+	// (Task -> "Task Depends On".task). Nothing found = arrows stay read-only.
+	setup_dependency_config() {
+		this.dependency_config = null;
+		const explicit = this.calendar_settings.depends_on_table;
+		if (explicit) {
+			this.dependency_config = explicit;
+			return;
+		}
+		const table_fields = (this.meta.fields || []).filter(
+			(df) => df.fieldtype === "Table" && df.options
+		);
+		if (!table_fields.length) return;
+		return Promise.all(
+			table_fields.map(
+				(df) =>
+					new Promise((resolve) => frappe.model.with_doctype(df.options, () => resolve(df)))
+			)
+		).then((dfs) => {
+			for (const df of dfs) {
+				const child_meta = frappe.get_meta(df.options);
+				const link =
+					child_meta &&
+					child_meta.fields.find(
+						(f) => f.fieldtype === "Link" && f.options === this.doctype
+					);
+				if (link) {
+					this.dependency_config = {
+						child_doctype: df.options,
+						parentfield: df.fieldname,
+						link_field: link.fieldname,
+					};
+					return;
+				}
 			}
 		});
 	}
@@ -36,6 +88,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		var me = this;
 		var meta = this.meta;
 		var field_map = this.calendar_settings.field_map;
+		var depends_on_field = field_map.depends_on || "depends_on_tasks";
 
 		this.tasks = this.data.map(function (item) {
 			// set progress
@@ -63,7 +116,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				id: item[field_map.id || "name"],
 				doctype: me.doctype,
 				progress: progress,
-				dependencies: item.depends_on_tasks || "",
+				dependencies: item[depends_on_field] || "",
 			};
 
 			if (item.color && frappe.ui.color.validate_hex(item.color)) {
@@ -153,9 +206,309 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				return '<div class="details-container">' + html + "</div>";
 			},
 		});
+		this.setup_dependency_editing();
 		this.setup_view_mode_buttons();
 		this.set_colors();
 	}
+
+	// ---- Dependency editing -------------------------------------------------------------
+	// The library (frappe-gantt 0.6.x) draws arrows from task.dependencies and offers no way
+	// to change them. Everything below decorates its rendered SVG: a link handle at each end
+	// of every bar (drag one onto another bar to create a finish-to-start dependency) and a
+	// fat invisible twin of every arrow so it can be clicked, selected and removed from a
+	// popup. Persistence goes through frappe.client.insert / delete on the child table, so
+	// the parent document's validate and on_update run exactly as they do from the form.
+
+	setup_dependency_editing() {
+		if (!this.dependency_config || !this.can_write) return;
+		const gantt = this.gantt;
+
+		// the library rebuilds bars and arrows on every view-mode change
+		const render = gantt.render.bind(gantt);
+		gantt.render = () => {
+			render();
+			this.decorate_gantt();
+		};
+		const hide_popup = gantt.hide_popup.bind(gantt);
+		gantt.hide_popup = () => {
+			hide_popup();
+			this.unselect_arrows();
+		};
+
+		// While the library moves or resizes a bar our handles cannot follow it, so hide them
+		// for the duration (CSS on .bar-moving) and put everything back on mouseup. A link-handle
+		// mousedown never reaches the svg (it stops propagation), so linking is unaffected.
+		gantt.$svg.addEventListener("mousedown", (e) => {
+			const on_bar = e.target.closest && e.target.closest(".bar-wrapper");
+			if (on_bar && !e.target.classList.contains("link-handle")) {
+				gantt.$svg.classList.add("bar-moving");
+			}
+		});
+		if (this._dependency_mouseup) {
+			document.removeEventListener("mouseup", this._dependency_mouseup);
+		}
+		this._dependency_mouseup = () => {
+			if (this.gantt !== gantt) return;
+			gantt.$svg.classList.remove("bar-moving");
+			this.realign_decorations();
+		};
+		// document, not svg: a drag may end outside the chart (the library resets there too)
+		document.addEventListener("mouseup", this._dependency_mouseup);
+
+		this.decorate_gantt();
+
+		$(gantt.popup_wrapper)
+			.off("click.dependency")
+			.on("click.dependency", ".remove-dependency", (e) => {
+				e.preventDefault();
+				const $btn = $(e.currentTarget);
+				this.remove_dependency($btn.attr("data-from"), $btn.attr("data-to"));
+			});
+	}
+
+	decorate_gantt() {
+		this.gantt.bars.forEach((bar) => this.draw_link_handles(bar));
+		this.gantt.arrows.forEach((arrow) => this.bind_arrow(arrow));
+	}
+
+	realign_decorations() {
+		this.gantt.bars.forEach((bar) => this.position_link_handles(bar));
+		this.gantt.arrows.forEach(
+			(arrow) => arrow.hit && arrow.hit.setAttribute("d", arrow.element.getAttribute("d"))
+		);
+	}
+
+	draw_link_handles(bar) {
+		if (bar.invalid) return;
+		bar.link_handles = {};
+		["start", "end"].forEach((role) => {
+			const handle = svg_el(
+				"circle",
+				{ class: "link-handle " + role, r: 5, "data-role": role },
+				bar.handle_group
+			);
+			// stop the library treating this as the start of a bar drag, or as a bar click
+			handle.addEventListener("mousedown", (e) => {
+				e.stopPropagation();
+				e.preventDefault();
+				this.start_link_drag(bar, role, e);
+			});
+			handle.addEventListener("click", (e) => e.stopPropagation());
+			bar.link_handles[role] = handle;
+		});
+		this.position_link_handles(bar);
+	}
+
+	// Handles sit where the library's arrows attach: the START (incoming) handle just left of
+	// the bar at mid-height, where an arrow arrives; the END (outgoing) handle centred just
+	// below the bar, where an arrow leaves. That also keeps the end handle clear of a label
+	// drawn beside a short bar.
+	position_link_handles(bar) {
+		if (!bar.link_handles) return;
+		const $bar = bar.$bar;
+		const r = +bar.link_handles.start.getAttribute("r");
+		bar.link_handles.start.setAttribute("cx", $bar.getX() - r - 3);
+		bar.link_handles.start.setAttribute("cy", $bar.getY() + $bar.getHeight() / 2);
+		bar.link_handles.end.setAttribute("cx", $bar.getX() + $bar.getWidth() / 2);
+		bar.link_handles.end.setAttribute("cy", $bar.getY() + $bar.getHeight() + r + 2);
+	}
+
+	// Drag from a bar's END handle onto another bar: that bar will depend on this one.
+	// Drag from a bar's START handle onto another bar: this bar will depend on that one.
+	start_link_drag(bar, role, e) {
+		const gantt = this.gantt;
+		gantt.hide_popup();
+		const handle = bar.link_handles[role];
+		const origin = { x: +handle.getAttribute("cx"), y: +handle.getAttribute("cy") };
+		const line = svg_el(
+			"path",
+			{ class: "link-drag-line", d: `M ${origin.x} ${origin.y} L ${origin.x} ${origin.y}` },
+			gantt.layers.arrow
+		);
+		gantt.$svg.classList.add("linking");
+
+		const move = (ev) => {
+			const p = this.svg_point(ev);
+			line.setAttribute("d", `M ${origin.x} ${origin.y} L ${p.x} ${p.y}`);
+			this.highlight_drop_target(this.bar_at(p), bar);
+		};
+		const finish = (ev) => {
+			const target = this.bar_at(this.svg_point(ev));
+			cleanup();
+			if (!target || target === bar) return;
+			const [from, to] = role === "end" ? [bar, target] : [target, bar];
+			this.add_dependency(from.task.id, to.task.id);
+		};
+		const cancel = (ev) => {
+			if (ev.key === "Escape") cleanup();
+		};
+		const cleanup = () => {
+			line.remove();
+			gantt.$svg.classList.remove("linking");
+			this.highlight_drop_target(null);
+			document.removeEventListener("mousemove", move);
+			document.removeEventListener("mouseup", finish);
+			document.removeEventListener("keydown", cancel);
+		};
+		document.addEventListener("mousemove", move);
+		document.addEventListener("mouseup", finish);
+		document.addEventListener("keydown", cancel);
+	}
+
+	svg_point(ev) {
+		const svg = this.gantt.$svg;
+		const pt = svg.createSVGPoint();
+		pt.x = ev.clientX;
+		pt.y = ev.clientY;
+		return pt.matrixTransform(svg.getScreenCTM().inverse());
+	}
+
+	// The bar itself, or either of its link handles (with some slack): a drop on the target's
+	// circle is the natural gesture, so it must count as the bar.
+	bar_at(p) {
+		return (
+			this.gantt.bars.find((bar) => {
+				if (bar.invalid) return false;
+				const b = bar.$bar;
+				if (
+					p.x >= b.getX() - 4 &&
+					p.x <= b.getEndX() + 4 &&
+					p.y >= b.getY() &&
+					p.y <= b.getY() + b.getHeight()
+				) {
+					return true;
+				}
+				return Object.values(bar.link_handles || {}).some((h) => {
+					const dx = p.x - +h.getAttribute("cx");
+					const dy = p.y - +h.getAttribute("cy");
+					const r = +h.getAttribute("r") + 4;
+					return dx * dx + dy * dy <= r * r;
+				});
+			}) || null
+		);
+	}
+
+	highlight_drop_target(target, source) {
+		this.gantt.bars.forEach((bar) =>
+			bar.group.classList.toggle("link-target", !!target && bar === target && bar !== source)
+		);
+	}
+
+	bind_arrow(arrow) {
+		// the visible arrow is a 1.4px stroke; give it an invisible fat twin to click on
+		arrow.hit = svg_el(
+			"path",
+			{ class: "arrow-hit", d: arrow.element.getAttribute("d") },
+			this.gantt.layers.arrow
+		);
+		arrow.hit.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.select_arrow(arrow);
+		});
+	}
+
+	select_arrow(arrow) {
+		this.gantt.unselect_all();
+		this.unselect_arrows();
+		arrow.element.classList.add("active");
+		this.show_arrow_popup(arrow);
+	}
+
+	unselect_arrows() {
+		(this.gantt.arrows || []).forEach((a) => a.element.classList.remove("active"));
+	}
+
+	task_label(id) {
+		const item = this.get_item(id);
+		const title = item && this.meta.title_field && item[this.meta.title_field];
+		return frappe.utils.escape_html(title ? `${title} (${id})` : id);
+	}
+
+	show_arrow_popup(arrow) {
+		const gantt = this.gantt;
+		const from = arrow.from_task.task;
+		const to = arrow.to_task.task;
+		const html = `<div class="details-container dependency-popup">
+			<div class="title">${__("Dependency")}</div>
+			<div class="subtitle">${__("{0} must finish before {1} can start", [
+				`<b>${this.task_label(from.id)}</b>`,
+				`<b>${this.task_label(to.id)}</b>`,
+			])}</div>
+			<button class="btn btn-xs btn-default remove-dependency"
+				data-from="${from.id}" data-to="${to.id}">${__("Remove dependency")}</button>
+		</div>`;
+
+		// the library builds its Popup lazily with the task html; borrow it for the arrow
+		if (!gantt.popup) gantt.show_popup({ target_element: arrow.hit, task: to });
+		const popup = gantt.popup;
+		const original = popup.custom_html;
+		popup.custom_html = () => html;
+		popup.show({ target_element: arrow.hit, position: "left", task: to });
+		popup.custom_html = original;
+	}
+
+	// BaseList.refresh() drops a call whose query arguments match the previous one within
+	// three seconds (throttling for realtime updates). Ours are identical by construction —
+	// only the data changed — so clear the memo first.
+	refresh_after_dependency_change() {
+		this.last_args = null;
+		return this.refresh();
+	}
+
+	add_dependency(from_id, to_id) {
+		const cfg = this.dependency_config;
+		const to_task = this.gantt.get_task(to_id);
+		if (to_task && (to_task.dependencies || []).includes(from_id)) {
+			frappe.show_alert({
+				message: __("{0} already depends on {1}", [to_id, from_id]),
+				indicator: "orange",
+			});
+			return;
+		}
+		const doc = {
+			doctype: cfg.child_doctype,
+			parenttype: this.doctype,
+			parent: to_id,
+			parentfield: cfg.parentfield,
+			[cfg.link_field]: from_id,
+		};
+		// frappe.client.insert appends the row to the parent and saves it, so the parent's
+		// validate/on_update run (circular check, rescheduling of dependants, ...)
+		return frappe
+			.xcall("frappe.client.insert", { doc })
+			.then(() =>
+				frappe.show_alert({
+					message: __("{0} now depends on {1}", [to_id, from_id]),
+					indicator: "green",
+				})
+			)
+			.finally(() => this.refresh_after_dependency_change());
+	}
+
+	remove_dependency(from_id, to_id) {
+		const cfg = this.dependency_config;
+		this.gantt.hide_popup();
+		return frappe
+			.xcall("frappe.client.get_list", {
+				doctype: cfg.child_doctype,
+				parent: this.doctype,
+				fields: ["name"],
+				filters: { parenttype: this.doctype, parent: to_id, [cfg.link_field]: from_id },
+				limit_page_length: 1,
+			})
+			.then((rows) => {
+				if (!rows.length) return;
+				// frappe.client.delete removes a child row through its parent, so on_update runs
+				return frappe.xcall("frappe.client.delete", {
+					doctype: cfg.child_doctype,
+					name: rows[0].name,
+				});
+			})
+			.then(() => frappe.show_alert({ message: __("Dependency removed"), indicator: "green" }))
+			.finally(() => this.refresh_after_dependency_change());
+	}
+
+	// ---- end dependency editing ---------------------------------------------------------
 
 	setup_view_mode_buttons() {
 		// view modes (for translation) __("Day"), __("Week"), __("Month"),

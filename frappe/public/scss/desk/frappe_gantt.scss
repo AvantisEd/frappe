@@ -89,3 +89,70 @@
 		position: relative;
 	}
 }
+
+// Dependency editing (avn-main, see gantt_view.js): link handles on the bar ends, the line
+// drawn while dragging one, a fat invisible twin of each arrow to click on, and the popup
+// that offers to remove a selected arrow.
+.gantt {
+	.link-handle {
+		fill: var(--gray-600);
+		stroke: var(--fg-color);
+		stroke-width: 1.5;
+		cursor: crosshair;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.bar-wrapper:hover .link-handle,
+	.bar-wrapper.active .link-handle,
+	.link-handle:hover,
+	&.linking .link-handle {
+		opacity: 1;
+	}
+
+	// the handles cannot follow a bar the library is moving or resizing: hide them meanwhile
+	&.bar-moving .bar-wrapper .link-handle,
+	&.bar-moving .bar-wrapper.active .link-handle {
+		opacity: 0;
+	}
+
+	.bar-wrapper.link-target .bar {
+		stroke: var(--primary);
+		stroke-width: 2;
+	}
+
+	.link-drag-line {
+		fill: none;
+		stroke: var(--primary);
+		stroke-width: 1.5;
+		stroke-dasharray: 4 3;
+		pointer-events: none;
+	}
+
+	.arrow-hit {
+		fill: none;
+		stroke: transparent;
+		stroke-width: 12;
+		cursor: pointer;
+	}
+
+	.arrow path.active {
+		stroke: var(--primary);
+		stroke-width: 2;
+	}
+}
+
+.gantt-container .popup-wrapper .dependency-popup {
+	padding: 0.75rem;
+	min-width: 220px;
+
+	.subtitle {
+		color: var(--gray-400);
+		margin-bottom: 0.5rem;
+		white-space: normal;
+	}
+
+	.btn {
+		width: 100%;
+	}
+}
