@@ -81,12 +81,19 @@
 	}
 }
 
+// One element scrolls BOTH axes (avn-main). Upstream gives the vertical scroll to .gantt-modern
+// and leaves the library's .gantt-container (overflow: auto) scrolling horizontally inside it.
+// Browsers latch a wheel gesture onto the innermost element that can consume any part of its
+// first delta, so a trackpad swipe with even a 2px sideways component is captured by the inner
+// container and its vertical movement is dropped: the chart cannot be scrolled down.
 .gantt-modern {
 	height: calc(100vh - 240px);
-	overflow-y: auto;
+	overflow: hidden;
 
 	.gantt-container {
 		position: relative;
+		height: 100%;
+		overflow: auto;
 	}
 }
 
