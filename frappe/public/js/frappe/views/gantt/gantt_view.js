@@ -18,6 +18,9 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			.setup_defaults()
 			.then(() => {
 				this.page_title = this.page_title + " " + __("Gantt");
+				// A plan is read whole: the list's 20 (100 on a tall screen) rows cut a chart off
+				// mid-workstream with only a Load More button below to say so (avn-main).
+				this.page_length = this.selected_page_count = 500;
 				this.calendar_settings = frappe.views.calendar[this.doctype] || {};
 
 				if (typeof this.calendar_settings.gantt == "object") {
@@ -77,6 +80,19 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		});
 	}
 
+	// Tree doctypes (Task: is_group + parent_task): the parent link lets the chart nest each
+	// child under its group and draw the group as a summary bar (avn-main).
+	async set_fields() {
+		await super.set_fields();
+		if (this.meta.is_tree && this.meta.nsm_parent_field) {
+			this._add_field(this.meta.nsm_parent_field);
+		}
+	}
+
+	get parent_field() {
+		return this.meta.is_tree ? this.meta.nsm_parent_field : null;
+	}
+
 	setup_view() {}
 
 	prepare_data(data) {
@@ -127,7 +143,75 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				r["custom_class"] = "bar-milestone";
 			}
 
+			if (me.parent_field) {
+				r.is_group = !!item.is_group;
+				r.parent_id = item[me.parent_field] || null;
+				if (r.is_group) r.custom_class = "bar-group " + (r.custom_class || "");
+			}
+
 			return r;
+		});
+
+		if (this.parent_field) this.arrange_tree();
+	}
+
+	// Groups as summary rows: each group is followed by its children (recursively, in the
+	// list's own order), spans its children's dates, and the arrows that merely encode
+	// containment are dropped. ERPNext appends every child to its parent's depends_on on
+	// save, so without this a group shows an arrow from each of its children; the rows stay
+	// in the data (they stop a group being completed before its children), only the chart
+	// leaves them out. A child whose parent is not loaded stays where the list put it.
+	arrange_tree() {
+		const by_id = new Map(this.tasks.map((t) => [t.id, t]));
+		const children = new Map();
+		this.tasks.forEach((t) => {
+			if (t.parent_id && by_id.has(t.parent_id)) {
+				if (!children.has(t.parent_id)) children.set(t.parent_id, []);
+				children.get(t.parent_id).push(t);
+			}
+		});
+
+		const ordered = [];
+		const visit = (t) => {
+			ordered.push(t);
+			(children.get(t.id) || []).forEach(visit);
+		};
+		this.tasks.forEach((t) => {
+			if (!t.parent_id || !by_id.has(t.parent_id)) visit(t);
+		});
+		this.tasks = ordered;
+
+		const span = (t) => {
+			const kids = children.get(t.id) || [];
+			if (!kids.length) return;
+			let start = null;
+			let end = null;
+			kids.forEach((k) => {
+				span(k);
+				if (k.start && (!start || k.start < start)) start = k.start;
+				if (k.end && (!end || k.end > end)) end = k.end;
+			});
+			if (start && end) {
+				t.start = start;
+				t.end = end;
+			}
+		};
+		this.tasks.forEach((t) => {
+			if (!t.parent_id || !by_id.has(t.parent_id)) span(t);
+		});
+
+		this.tasks.forEach((t) => {
+			if (!t.dependencies) return;
+			t.dependencies = t.dependencies
+				.split(",")
+				.map((id) => id.trim())
+				.filter((id) => {
+					if (!id) return false;
+					const dep = by_id.get(id);
+					// a child of this group, or this task's own group
+					return !(dep && (dep.parent_id === t.id || t.parent_id === id));
+				})
+				.join(",");
 		});
 	}
 
@@ -172,17 +256,17 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			},
 			on_date_change: (task, start, end) => {
 				if (!me.can_write) return;
-				frappe.db
-					.set_value(task.doctype, task.id, {
-						[field_map.start]: moment(start).format(date_format),
-						[field_map.end]: moment(end).format(date_format),
-					})
-					.then(() => {
-						// The library drew this bar at a placeholder position (dashed, no progress,
-						// no handles) because a date was missing. The drag has just supplied both,
-						// so redraw from the saved data and the bar becomes a normal one.
-						if (task.invalid) me.refresh_in_place();
-					});
+				me.queue_save(task, {
+					[field_map.start]: moment(start).format(date_format),
+					[field_map.end]: moment(end).format(date_format),
+				}).then(() => {
+					// Redraw from the saved data when the chart cannot update itself: a bar the
+					// library drew at a placeholder position (dashed, no progress, no handles)
+					// because a date was missing now has both; a child's move changes the span
+					// its group's summary bar is drawn from (and, with the avantis app, the
+					// group's stored dates).
+					if (task.invalid || task.parent_id) me.schedule_refresh_in_place();
+				});
 			},
 			on_progress_change: (task, progress) => {
 				if (!me.can_write) return;
@@ -195,9 +279,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				}
 
 				if (progress_fieldname) {
-					frappe.db.set_value(task.doctype, task.id, {
-						[progress_fieldname]: parseInt(progress),
-					});
+					me.queue_save(task, { [progress_fieldname]: parseInt(progress) });
 				}
 			},
 			on_view_change: (mode) => {
@@ -231,6 +313,17 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			render();
 			this.after_gantt_render();
 		};
+		// A summary bar's dates are its children's: moving or resizing it means nothing, so
+		// the drag never reaches the library (capture phase, before its delegated handler).
+		this.gantt.$svg.addEventListener(
+			"mousedown",
+			(e) => {
+				if (e.target.closest && e.target.closest(".bar-wrapper.bar-group")) {
+					e.stopPropagation();
+				}
+			},
+			true
+		);
 		this.setup_dependency_editing();
 		this.after_gantt_render();
 		if (keep_scroll) {
@@ -242,9 +335,72 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		this.set_colors();
 	}
 
+	// One drag can move several bars (the library carries a bar's dependants along) and it
+	// reports each of them separately. Saved concurrently, two of those requests can write
+	// the same row — a group's dates follow its children (avantis app) — and MariaDB's
+	// snapshot isolation rejects the second as a conflicting update. So save one at a time;
+	// a failed save must not hold up the ones behind it.
+	queue_save(task, values) {
+		const save = () => frappe.db.set_value(task.doctype, task.id, values);
+		this._save_chain = (this._save_chain || Promise.resolve()).then(save, save);
+		return this._save_chain;
+	}
+
+	// several saves from one drag → one redraw, once they have all landed
+	schedule_refresh_in_place() {
+		clearTimeout(this._refresh_timer);
+		this._refresh_timer = setTimeout(() => this.refresh_in_place(), 400);
+	}
+
 	after_gantt_render() {
+		this.style_group_bars();
 		this.bind_placeholder_bars();
 		if (this.dependency_config && this.can_write) this.decorate_gantt();
+	}
+
+	// Draw a group as a summary bar: a slim dark bar with end caps along the foot of the row,
+	// its label above it like a heading, in place of the box the library drew. The arrows
+	// that touch it were computed on the box, so re-route them.
+	style_group_bars() {
+		const groups = this.gantt.bars.filter((bar) => bar.task.is_group);
+		if (!groups.length) return;
+		const proto = Object.getPrototypeOf(groups[0]);
+		if (!proto._group_label_guarded) {
+			// the library re-places labels in the next animation frame and after every drag
+			const update_label_position = proto.update_label_position;
+			proto.update_label_position = function () {
+				if (!this.task.is_group) return update_label_position.call(this);
+				const label = this.group.querySelector(".bar-label");
+				label.classList.add("big");
+				label.setAttribute("x", this.$bar.getX());
+				label.setAttribute("y", this.$bar.getY() - 10);
+			};
+			proto._group_label_guarded = true;
+		}
+		groups.forEach((bar) => {
+			const $bar = bar.$bar;
+			const x = $bar.getX();
+			const w = $bar.getWidth();
+			const thickness = 8;
+			const top = $bar.getY() + $bar.getHeight() - thickness;
+			$bar.setAttribute("y", top);
+			$bar.setAttribute("height", thickness);
+			$bar.setAttribute("rx", 1);
+			$bar.setAttribute("ry", 1);
+			if (bar.$bar_progress) bar.$bar_progress.remove();
+			[x, x + w].forEach((cx) => {
+				svg_el(
+					"polygon",
+					{
+						class: "group-cap",
+						points: `${cx - 6},${top} ${cx + 6},${top} ${cx},${top + thickness + 5}`,
+					},
+					bar.bar_group
+				);
+			});
+			bar.update_label_position();
+		});
+		this.gantt.arrows.forEach((arrow) => arrow.update());
 	}
 
 	// The library skips the click binding for a bar it drew at a placeholder position (a date
@@ -329,7 +485,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	}
 
 	draw_link_handles(bar) {
-		if (bar.invalid) return;
+		if (bar.invalid || bar.task.is_group) return;
 		bar.link_handles = {};
 		["start", "end"].forEach((role) => {
 			const handle = svg_el(

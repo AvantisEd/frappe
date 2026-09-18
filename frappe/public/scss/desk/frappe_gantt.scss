@@ -97,6 +97,31 @@
 	}
 }
 
+// Summary bars for groups on tree doctypes (avn-main, see gantt_view.js arrange_tree).
+.gantt-modern .gantt .bar-wrapper.bar-group {
+	cursor: default;
+
+	.bar,
+	&:hover .bar,
+	&.active .bar {
+		fill: var(--gray-700);
+		stroke: none;
+	}
+
+	.group-cap {
+		fill: var(--gray-700);
+	}
+
+	.handle {
+		display: none;
+	}
+
+	.bar-label {
+		font-weight: 600;
+		fill: var(--text-color);
+	}
+}
+
 // Dependency editing (avn-main, see gantt_view.js): link handles on the bar ends, the line
 // drawn while dragging one, a fat invisible twin of each arrow to click on, and the popup
 // that offers to remove a selected arrow.
