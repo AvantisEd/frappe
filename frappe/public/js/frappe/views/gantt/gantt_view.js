@@ -145,6 +145,16 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		const field_map = this.calendar_settings.field_map;
 		const date_format = "YYYY-MM-DD";
 
+		// An in-place redraw (refresh_in_place) must not jump: the library scrolls to the oldest
+		// task on every render and the container is rebuilt, which would also lose the vertical
+		// position. A user-initiated refresh (filter, sort) keeps the library's behaviour.
+		const container = this.$result[0].querySelector(".gantt-container");
+		const keep_scroll =
+			this._keep_scroll && container
+				? { top: container.scrollTop, left: container.scrollLeft }
+				: null;
+		this._keep_scroll = false;
+
 		this.$result.empty();
 		this.$result.addClass("gantt-modern");
 
@@ -162,10 +172,17 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			},
 			on_date_change: (task, start, end) => {
 				if (!me.can_write) return;
-				frappe.db.set_value(task.doctype, task.id, {
-					[field_map.start]: moment(start).format(date_format),
-					[field_map.end]: moment(end).format(date_format),
-				});
+				frappe.db
+					.set_value(task.doctype, task.id, {
+						[field_map.start]: moment(start).format(date_format),
+						[field_map.end]: moment(end).format(date_format),
+					})
+					.then(() => {
+						// The library drew this bar at a placeholder position (dashed, no progress,
+						// no handles) because a date was missing. The drag has just supplied both,
+						// so redraw from the saved data and the bar becomes a normal one.
+						if (task.invalid) me.refresh_in_place();
+					});
 			},
 			on_progress_change: (task, progress) => {
 				if (!me.can_write) return;
@@ -192,10 +209,11 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			custom_popup_html: (task) => {
 				var item = me.get_item(task.id);
 
+				var dates = task.invalid
+					? __("Dates not set: drag the bar to set them")
+					: `${moment(task._start).format("MMM D")} - ${moment(task._end).format("MMM D")}`;
 				var html = `<div class="title">${task.name}</div>
-					<div class="subtitle">${moment(task._start).format("MMM D")} - ${moment(task._end).format(
-					"MMM D"
-				)}</div>`;
+					<div class="subtitle">${dates}</div>`;
 
 				// custom html in doctype settings
 				var custom = me.settings.gantt_custom_popup_html;
@@ -206,9 +224,49 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				return '<div class="details-container">' + html + "</div>";
 			},
 		});
+
+		// the library rebuilds bars and arrows on every view-mode change
+		const render = this.gantt.render.bind(this.gantt);
+		this.gantt.render = () => {
+			render();
+			this.after_gantt_render();
+		};
 		this.setup_dependency_editing();
+		this.after_gantt_render();
+		if (keep_scroll) {
+			const el = this.gantt.$container;
+			el.scrollTop = keep_scroll.top;
+			el.scrollLeft = keep_scroll.left;
+		}
 		this.setup_view_mode_buttons();
 		this.set_colors();
+	}
+
+	after_gantt_render() {
+		this.bind_placeholder_bars();
+		if (this.dependency_config && this.can_write) this.decorate_gantt();
+	}
+
+	// The library skips the click binding for a bar it drew at a placeholder position (a date
+	// is missing), so such a task could be dragged but neither its popup nor a double-click
+	// to open the form worked. There is no reason for that: bind them like any other bar.
+	// Dragging one also threw on every mousemove (the library moves the resize handles and the
+	// progress bar it never drew for such a bar), which stopped its arrows following the drag.
+	bind_placeholder_bars() {
+		this.gantt.bars.forEach((bar) => {
+			if (!bar.invalid) return;
+			bar.setup_click_event();
+			const proto = Object.getPrototypeOf(bar);
+			if (!proto._placeholder_guarded) {
+				["update_handle_position", "update_progressbar_position"].forEach((name) => {
+					const original = proto[name];
+					proto[name] = function () {
+						if (!this.invalid) original.call(this);
+					};
+				});
+				proto._placeholder_guarded = true;
+			}
+		});
 	}
 
 	// ---- Dependency editing -------------------------------------------------------------
@@ -223,12 +281,6 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		if (!this.dependency_config || !this.can_write) return;
 		const gantt = this.gantt;
 
-		// the library rebuilds bars and arrows on every view-mode change
-		const render = gantt.render.bind(gantt);
-		gantt.render = () => {
-			render();
-			this.decorate_gantt();
-		};
 		const hide_popup = gantt.hide_popup.bind(gantt);
 		gantt.hide_popup = () => {
 			hide_popup();
@@ -254,8 +306,6 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		};
 		// document, not svg: a drag may end outside the chart (the library resets there too)
 		document.addEventListener("mouseup", this._dependency_mouseup);
-
-		this.decorate_gantt();
 
 		$(gantt.popup_wrapper)
 			.off("click.dependency")
@@ -447,10 +497,12 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		popup.custom_html = original;
 	}
 
-	// BaseList.refresh() drops a call whose query arguments match the previous one within
-	// three seconds (throttling for realtime updates). Ours are identical by construction —
-	// only the data changed — so clear the memo first.
-	refresh_after_dependency_change() {
+	// Re-fetch and redraw after the chart itself changed a document (dependency, dates),
+	// keeping the scroll position. BaseList.refresh() drops a call whose query arguments match
+	// the previous one within three seconds (throttling for realtime updates). Ours are
+	// identical by construction — only the data changed — so clear the memo first.
+	refresh_in_place() {
+		this._keep_scroll = true;
 		this.last_args = null;
 		return this.refresh();
 	}
@@ -482,7 +534,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 					indicator: "green",
 				})
 			)
-			.finally(() => this.refresh_after_dependency_change());
+			.finally(() => this.refresh_in_place());
 	}
 
 	remove_dependency(from_id, to_id) {
@@ -505,7 +557,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				});
 			})
 			.then(() => frappe.show_alert({ message: __("Dependency removed"), indicator: "green" }))
-			.finally(() => this.refresh_after_dependency_change());
+			.finally(() => this.refresh_in_place());
 	}
 
 	// ---- end dependency editing ---------------------------------------------------------
