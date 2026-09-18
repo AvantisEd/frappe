@@ -153,6 +153,26 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		});
 
 		if (this.parent_field) this.arrange_tree();
+		this.prune_missing_dependencies();
+	}
+
+	// While a bar is dragged the library dereferences every dependency's bar
+	// (Bar.update_bar_position -> gantt.get_bar(dep).$bar) to stop a task being moved before a
+	// predecessor. A predecessor that is not on the chart -- filtered out by a list filter, or
+	// past the loaded page -- makes that lookup undefined, so it throws on every mousemove and
+	// the bar cannot be moved at all, silently. Drop those ids: a constraint the user cannot
+	// see should not freeze the bar. Predecessors that ARE on the chart still constrain it.
+	// Upstream frappe-gantt 0.6.1 bug.
+	prune_missing_dependencies() {
+		const loaded = new Set(this.tasks.map((t) => t.id));
+		this.tasks.forEach((t) => {
+			if (!t.dependencies) return;
+			t.dependencies = t.dependencies
+				.split(",")
+				.map((id) => id.trim())
+				.filter((id) => id && loaded.has(id))
+				.join(",");
+		});
 	}
 
 	// Groups as summary rows: each group is followed by its children (recursively, in the
