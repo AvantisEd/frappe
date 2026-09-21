@@ -5,6 +5,37 @@ frappe.provide("frappe.treeview_settings");
 frappe.provide("frappe.views.trees");
 window.cur_tree = null;
 
+// frappe.route_options is shared with the list view, whose filters may be a bare value,
+// an [operator, value] pair, or a list of such pairs for several conditions on one
+// field. A tree filter is a single Select or Link and can only hold a bare value, so
+// unwrap one equality condition and ignore anything else.
+//
+// Without this, any Number Card on a tree doctype opens an empty tree: the card always
+// builds the list form (number_card_widget.js), and passes no doc_view, so the route
+// falls through to the doctype's default view -- which for a tree doctype is the tree.
+// The filter then took a value like [["=", "Acme Inc"]], which matches no Select option,
+// and that array reached both the filter and root_label, so get_children found nothing.
+frappe.views.tree_filter_value = function (value) {
+	if (!Array.isArray(value)) {
+		return value;
+	}
+
+	let condition = value;
+	if (Array.isArray(value[0])) {
+		// several conditions on one field cannot be expressed as a single filter
+		if (value.length !== 1) {
+			return undefined;
+		}
+		condition = value[0];
+	}
+
+	if (condition.length === 2 && condition[0] === "=") {
+		return condition[1];
+	}
+
+	return undefined;
+};
+
 frappe.views.TreeFactory = class TreeFactory extends frappe.views.Factory {
 	make(route) {
 		frappe.model.with_doctype(route[1], function () {
@@ -240,7 +271,12 @@ frappe.views.TreeView = class TreeView {
 		var me = this;
 		$.each(this.opts.filters || [], function (i, filter) {
 			if (frappe.route_options && frappe.route_options[filter.fieldname]) {
-				filter.default = frappe.route_options[filter.fieldname];
+				const value = frappe.views.tree_filter_value(
+					frappe.route_options[filter.fieldname]
+				);
+				if (value !== undefined) {
+					filter.default = value;
+				}
 			}
 
 			if (!filter.disable_onchange) {
