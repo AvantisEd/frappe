@@ -785,12 +785,16 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				const class_name = c.replace("#", "");
 				const bar_color = "#" + c.substr(6);
 				const progress_color = frappe.ui.color.get_contrast_color(bar_color);
+				// Half-opaque progress overlay (avn-main): bars are coloured by status, and a
+				// solid contrast shade over the done fraction hid that colour entirely on a
+				// finished task (progress 100%). At 0.5 the status colour shows through.
 				return `
 				.gantt .bar-wrapper.${class_name} .bar {
 					fill: ${bar_color};
 				}
 				.gantt .bar-wrapper.${class_name} .bar-progress {
 					fill: ${progress_color};
+					fill-opacity: 0.5;
 				}
 			`;
 			})
