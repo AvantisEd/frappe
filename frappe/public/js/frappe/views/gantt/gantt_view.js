@@ -8,6 +8,18 @@ function svg_el(tag, attrs, parent) {
 	return el;
 }
 
+// Keep a bar's assignee avatars just left of it: clear of the start link handle and of the
+// head of an incoming arrow, which the library ends padding / 2 short of the bar. A task in
+// the chart's first column has no room there, so its avatars stay on the chart and overlap
+// the start of the bar instead of being cut off at the edge.
+const ASSIGNEE_GROUP_WIDTH = 120;
+function place_assignees(bar) {
+	if (!bar.$assignees) return;
+	const right = Math.max(bar.$bar.getX() - 20, bar.assignees_width + 2);
+	bar.$assignees.setAttribute("x", right - ASSIGNEE_GROUP_WIDTH);
+	bar.$assignees.setAttribute("y", bar.y);
+}
+
 frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	get view_name() {
 		return "Gantt";
@@ -87,13 +99,18 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		if (this.meta.is_tree && this.meta.nsm_parent_field) {
 			this._add_field(this.meta.nsm_parent_field);
 		}
+		this._add_field("_assign");
 	}
 
 	get parent_field() {
 		return this.meta.is_tree ? this.meta.nsm_parent_field : null;
 	}
 
-	setup_view() {}
+	// The list's own setup_view binds row events the chart has no rows for; only the
+	// filterable click is wanted, so an assignee avatar filters the chart to that person.
+	setup_view() {
+		this.setup_filterable();
+	}
 
 	prepare_data(data) {
 		super.prepare_data(data);
@@ -375,6 +392,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	after_gantt_render() {
 		this.style_group_bars();
 		this.bind_placeholder_bars();
+		this.draw_assignees();
 		if (this.dependency_config && this.can_write) this.decorate_gantt();
 	}
 
@@ -421,6 +439,58 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			bar.update_label_position();
 		});
 		this.gantt.arrows.forEach((arrow) => arrow.update());
+	}
+
+	// Who holds each task (avn-main): the Kanban card's avatar group, left of the bar. SVG
+	// cannot lay out the HTML avatars, so each group sits in a foreignObject, in a layer of
+	// its own above the arrows and below the bars. The library re-renders the whole svg on
+	// every view-mode change, so the layer is rebuilt each time; during a drag the avatars
+	// follow the bar through its update_bar_position.
+	draw_assignees() {
+		const gantt = this.gantt;
+		if (!gantt.bars.length) return;
+		const proto = Object.getPrototypeOf(gantt.bars[0]);
+		if (!proto._assignees_follow) {
+			const update_bar_position = proto.update_bar_position;
+			proto.update_bar_position = function (...args) {
+				update_bar_position.apply(this, args);
+				place_assignees(this);
+			};
+			proto._assignees_follow = true;
+		}
+
+		const layer = svg_el("g", { class: "assignee-layer" });
+		gantt.$svg.insertBefore(layer, gantt.layers.arrow.nextSibling);
+		gantt.bars.forEach((bar) => {
+			const item = this.get_item(bar.task.id);
+			const users = item && item._assign ? JSON.parse(item._assign) : [];
+			bar.$assignees = null;
+			if (!users.length) return;
+			const holder = svg_el(
+				"foreignObject",
+				{ class: "assignees", width: ASSIGNEE_GROUP_WIDTH, height: bar.height },
+				layer
+			);
+			// side by side, not overlapped as on a Kanban card: initials must read at a glance
+			holder.appendChild(
+				frappe.avatar_group(users, 3, {
+					align: "left",
+					overlap: false,
+					filterable: true,
+				})[0]
+			);
+			// avatar_group shows 3 and a "+N" chip, or all 4 when there is only one more
+			const shown = Math.min(users.length, 4);
+			bar.assignees_width = shown * 28;
+			bar.$assignees = holder;
+			place_assignees(bar);
+		});
+
+		// The library scrolls the earliest bar to one column from the left edge, which hides
+		// the avatars of whichever task starts first; scroll back far enough to show them. An
+		// in-place redraw restores its own scroll position after this.
+		const widest = Math.max(0, ...gantt.bars.map((bar) => bar.assignees_width || 0));
+		if (widest) gantt.$container.scrollLeft -= widest + 24;
 	}
 
 	// The library skips the click binding for a bar it drew at a placeholder position (a date

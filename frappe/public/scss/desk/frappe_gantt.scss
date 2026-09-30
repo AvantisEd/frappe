@@ -188,3 +188,21 @@
 		width: 100%;
 	}
 }
+
+// Assignee avatars left of each bar (avn-main, see gantt_view.js draw_assignees). The holder is
+// wider than most groups need, so it lets clicks through to the arrows beneath it; only the
+// avatars themselves take the pointer (a tooltip with the name, a click to filter).
+.gantt .assignees {
+	pointer-events: none;
+
+	.avatar-group {
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		justify-content: flex-end;
+	}
+
+	.avatar {
+		pointer-events: auto;
+	}
+}
