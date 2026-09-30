@@ -100,6 +100,8 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			this._add_field(this.meta.nsm_parent_field);
 		}
 		this._add_field("_assign");
+		// whatever the doctype's get_color (below) reads
+		(this.calendar_settings.fields || []).forEach((f) => this._add_field(f));
 	}
 
 	get parent_field() {
@@ -122,6 +124,11 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		var meta = this.meta;
 		var field_map = this.calendar_settings.field_map;
 		var depends_on_field = field_map.depends_on || "depends_on_tasks";
+		// A bar's colour (avn-main): the doctype's Gantt settings may derive it from the
+		// document, e.g. from its status, via get_color(item) -> hex. Otherwise, as upstream,
+		// its color field. Derived at render time, so a status written without a save (ERPNext's
+		// overdue job uses db_set) still colours the bar.
+		var get_color = this.calendar_settings.get_color;
 
 		this.tasks = this.data.map(function (item) {
 			// set progress
@@ -152,8 +159,9 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				dependencies: item[depends_on_field] || "",
 			};
 
-			if (item.color && frappe.ui.color.validate_hex(item.color)) {
-				r["custom_class"] = "color-" + item.color.substr(1);
+			var color = get_color ? get_color(item) : item.color;
+			if (color && frappe.ui.color.validate_hex(color)) {
+				r["custom_class"] = "color-" + color.substr(1);
 			}
 
 			if (item.is_milestone) {
@@ -262,7 +270,9 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 
 	render_gantt() {
 		const me = this;
-		const gantt_view_mode = this.view_user_settings.gantt_view_mode || "Day";
+		// The mode a user last picked, else the doctype's Gantt settings' view_mode (avn-main)
+		const gantt_view_mode =
+			this.view_user_settings.gantt_view_mode || this.calendar_settings.view_mode || "Day";
 		const field_map = this.calendar_settings.field_map;
 		const date_format = "YYYY-MM-DD";
 
