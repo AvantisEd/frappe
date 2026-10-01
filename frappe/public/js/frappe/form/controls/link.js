@@ -13,7 +13,7 @@ frappe.ui.form.ControlLink = class ControlLink extends frappe.ui.form.ControlDat
 	make_input() {
 		var me = this;
 		$(`<div class="link-field ui-front" style="position: relative;">
-			<input type="text" class="input-with-feedback form-control">
+			<input type="text" class="input-with-feedback form-control" autocomplete="off">
 			<span class="link-btn">
 				<a class="btn-clear" style="display: inline-flex;" title="${__("Clear Link")}">
 					${frappe.utils.icon("x", "xs")}
