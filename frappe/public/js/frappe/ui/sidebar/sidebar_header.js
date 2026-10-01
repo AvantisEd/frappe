@@ -17,7 +17,7 @@ frappe.ui.SidebarHeader = class SidebarHeader {
 			},
 			{
 				name: "workspaces",
-				label: "Workspaces",
+				label: __("Workspaces"),
 				icon: "wallpaper",
 				condition: function () {
 					return me.sibling_workspaces && me.sibling_workspaces.length > 0;
@@ -58,12 +58,12 @@ frappe.ui.SidebarHeader = class SidebarHeader {
 			this.dropdown_items.push(
 				{
 					name: "display",
-					label: "Display",
+					label: __("Display"),
 					icon: "monitor",
 					items: this.get_display_siblings(is_dark),
 				},
 				{
-					label: "Session Defaults",
+					label: __("Session Defaults"),
 					action: "frappe.ui.toolbar.setup_session_defaults()",
 					is_standard: 1,
 					condition: function () {
@@ -72,7 +72,7 @@ frappe.ui.SidebarHeader = class SidebarHeader {
 					icon: "sliders-horizontal",
 				},
 				{
-					label: "Reload",
+					label: __("Reload"),
 					action: "frappe.ui.toolbar.clear_cache()",
 					is_standard: 1,
 					icon: "rotate-ccw",
@@ -80,7 +80,7 @@ frappe.ui.SidebarHeader = class SidebarHeader {
 				},
 				{
 					name: "help",
-					label: "Help",
+					label: __("Help"),
 					icon: "info",
 					items: this.get_help_siblings(),
 				},
@@ -89,7 +89,7 @@ frappe.ui.SidebarHeader = class SidebarHeader {
 				},
 				{
 					name: "logout",
-					label: "Logout",
+					label: __("Logout"),
 					icon: "logout",
 					onClick: function () {
 						return frappe.app.logout();
