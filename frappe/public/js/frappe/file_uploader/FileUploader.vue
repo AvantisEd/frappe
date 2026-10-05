@@ -586,10 +586,44 @@ function return_as_dataurl() {
 async function upload_file(file, i) {
 	currently_uploading.value = i;
 
+	// AvantisEd: a site may store public files itself by defining
+	// frappe.file_upload_backend(file_obj, { name, on_progress }) -> Promise<url>.
+	// The bytes go wherever the backend sends them and only the resulting URL is posted
+	// to upload_file, which creates the File as a remote file. There is no fallback: a
+	// backend error fails this file, so a public file's bytes never reach the server.
+	const backend = frappe.file_upload_backend;
+	if (backend && !file.private && file.file_obj && !file.file_url) {
+		file.uploading = true;
+		try {
+			const url = await backend(file.file_obj, {
+				name: file.name,
+				on_progress: (loaded, total) => {
+					file.progress = loaded;
+					file.total = total;
+				},
+			});
+			if (!url) {
+				throw new Error(__("Public file storage returned no URL"));
+			}
+			file.file_url = url;
+			file.file_name = file.name;
+			file.file_size = file.file_obj.size;
+			file.optimize = false;
+		} catch (e) {
+			file.uploading = false;
+			file.failed = true;
+			file.error_message = (e && e.message) || String(e);
+			return;
+		}
+	}
+	// AvantisEd: a file that already has a URL (a backend-stored public file, or a web
+	// link) sends no bytes, so it never chunks
+	const bytes = file.file_url ? null : file.file_obj;
+
 	const CHUNK_SIZE = frappe.boot.file_chunk_size || 25 * 1024 * 1024;
 
-	const use_chunks = file.file_obj && file.file_obj.size > CHUNK_SIZE;
-	const total_chunks = use_chunks ? Math.ceil(file.file_obj.size / CHUNK_SIZE) : 1;
+	const use_chunks = bytes && bytes.size > CHUNK_SIZE;
+	const total_chunks = use_chunks ? Math.ceil(bytes.size / CHUNK_SIZE) : 1;
 
 	const send_chunk = (chunk_blob, chunk_index, chunk_byte_offset) => {
 		return new Promise((resolve, reject) => {
@@ -736,8 +770,8 @@ async function upload_file(file, i) {
 	// Slice and send chunks sequentially
 	let chunk_byte_offset = 0;
 	for (let chunk_index = 0; chunk_index < total_chunks; chunk_index++) {
-		const chunk_blob = file.file_obj
-			? file.file_obj.slice(chunk_byte_offset, chunk_byte_offset + CHUNK_SIZE)
+		const chunk_blob = bytes
+			? bytes.slice(chunk_byte_offset, chunk_byte_offset + CHUNK_SIZE)
 			: null;
 		await send_chunk(chunk_blob, chunk_index, chunk_byte_offset);
 		chunk_byte_offset += CHUNK_SIZE;
