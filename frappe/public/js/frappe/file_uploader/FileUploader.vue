@@ -571,6 +571,44 @@ function return_as_dataurl() {
 function upload_file(file, i) {
 	currently_uploading.value = i;
 
+	// AvantisEd: a site may store public files itself by defining
+	// frappe.file_upload_backend(file_obj, { name, on_progress }) -> Promise<url>.
+	// The bytes go wherever the backend sends them and only the resulting URL is posted
+	// to upload_file, which creates the File as a remote file. There is no fallback: a
+	// backend error fails this file, so a public file's bytes never reach the server.
+	const backend = frappe.file_upload_backend;
+	if (backend && !file.private && file.file_obj && !file.file_url) {
+		file.uploading = true;
+		return Promise.resolve()
+			.then(() =>
+				backend(file.file_obj, {
+					name: file.name,
+					on_progress: (loaded, total) => {
+						file.progress = loaded;
+						file.total = total;
+					},
+				})
+			)
+			.then((url) => {
+				if (!url) {
+					throw new Error(__("Public file storage returned no URL"));
+				}
+				file.uploading = false;
+				file.file_url = url;
+				file.file_name = file.name;
+				file.file_size = file.file_obj.size;
+				file.optimize = false;
+				return post_file(file, i);
+			})
+			.catch((e) => {
+				file.uploading = false;
+				file.failed = true;
+				file.error_message = (e && e.message) || String(e);
+			});
+	}
+	return post_file(file, i);
+}
+function post_file(file, i) {
 	return new Promise((resolve, reject) => {
 		let xhr = new XMLHttpRequest();
 		xhr.upload.addEventListener("loadstart", (e) => {
@@ -659,7 +697,7 @@ function upload_file(file, i) {
 		xhr.setRequestHeader("X-Frappe-CSRF-Token", frappe.csrf_token);
 
 		let form_data = new FormData();
-		if (file.file_obj) {
+		if (file.file_obj && !file.file_url) {
 			form_data.append("file", file.file_obj, file.name);
 		}
 		form_data.append("is_private", +file.private);
