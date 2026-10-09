@@ -30,3 +30,137 @@
 		position: relative;
 	}
 }
+
+// ---- AvantisEd (avn-main) ----------------------------------------------------------------
+
+// One element scrolls BOTH axes. frappe-gantt 1.1 sizes .gantt-container to the whole chart
+// height, so the page scrolls vertically and the container only horizontally. Browsers latch a
+// wheel gesture onto the innermost element that can consume any of its first delta, so a
+// trackpad swipe with a small sideways component is captured by the container and its
+// vertical movement is dropped. Capping the container's height makes it scroll both ways, and
+// keeps the library's sticky date header in view while scrolling down a long plan.
+.frappe-list .result .gantt-container {
+	height: min(var(--gv-grid-height), calc(100vh - 240px));
+}
+
+// Undated tasks drawn as placeholder bars (see gantt_view.js prepare_tasks)
+.gantt .bar-wrapper.bar-placeholder {
+	.bar {
+		fill-opacity: 0.25;
+		stroke: var(--gray-500);
+		stroke-width: 1;
+		stroke-dasharray: 5 3;
+	}
+
+	.bar-progress {
+		display: none;
+	}
+}
+
+// Summary bars for groups on tree doctypes (see gantt_view.js arrange_tree)
+.gantt .bar-wrapper.bar-group {
+	cursor: default;
+
+	.bar,
+	&:hover .bar,
+	&.active .bar {
+		fill: var(--gray-700);
+		stroke: none;
+	}
+
+	.group-cap {
+		fill: var(--gray-700);
+	}
+
+	.handle-group,
+	.handle {
+		display: none;
+	}
+
+	.bar-label {
+		font-weight: 600;
+		fill: var(--text-color);
+	}
+}
+
+// Dependency editing: link handles on the bar ends, the line drawn while dragging one, a fat
+// invisible twin of each arrow to click on, and the popup that offers to remove an arrow.
+.gantt {
+	.link-handle {
+		fill: var(--gray-600);
+		stroke: var(--fg-color);
+		stroke-width: 1.5;
+		cursor: crosshair;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.bar-wrapper:hover .link-handle,
+	.bar-wrapper.active .link-handle,
+	.link-handle:hover,
+	&.linking .link-handle {
+		opacity: 1;
+	}
+
+	// the handles cannot follow a bar the library is moving or resizing: hide them meanwhile
+	&.bar-moving .bar-wrapper .link-handle,
+	&.bar-moving .bar-wrapper.active .link-handle {
+		opacity: 0;
+	}
+
+	.bar-wrapper.link-target .bar {
+		stroke: var(--primary);
+		stroke-width: 2;
+	}
+
+	.link-drag-line {
+		fill: none;
+		stroke: var(--primary);
+		stroke-width: 1.5;
+		stroke-dasharray: 4 3;
+		pointer-events: none;
+	}
+
+	.arrow-hit {
+		fill: none;
+		stroke: transparent;
+		stroke-width: 12;
+		cursor: pointer;
+	}
+
+	.arrow path.active {
+		stroke: var(--primary);
+		stroke-width: 2;
+	}
+}
+
+.gantt-container .popup-wrapper .dependency-popup {
+	min-width: 220px;
+
+	.subtitle {
+		margin-bottom: 0.5rem;
+		white-space: normal;
+	}
+
+	.btn {
+		width: 100%;
+	}
+}
+
+// Assignee avatars left of each bar (see gantt_view.js draw_assignees). The holder is wider
+// than most groups need, so it lets clicks through to the arrows beneath it; only the avatars
+// themselves take the pointer (a tooltip with the name, a click to filter).
+.gantt .assignees {
+	pointer-events: none;
+
+	.avatar-group {
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		justify-content: flex-end;
+	}
+
+	.avatar {
+		pointer-events: auto;
+	}
+}
