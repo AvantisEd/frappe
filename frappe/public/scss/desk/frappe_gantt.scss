@@ -41,7 +41,9 @@
 // keeps the library's sticky date header in view while scrolling down a long plan.
 //
 // The cap is a max-height because the library writes the full chart height inline on the
-// container (container_height "auto"), which no stylesheet height can override.
+// container (container_height "auto"), which no stylesheet height can override. This value is
+// the fallback; gantt_view.js fit_gantt() sets it inline to reach exactly down to the paging
+// area, on every render and window resize.
 .frappe-list .result .gantt-container {
 	max-height: calc(100vh - 240px);
 
@@ -181,5 +183,27 @@
 
 	.avatar {
 		pointer-events: auto;
+	}
+}
+
+// The bar popup is dark, as it was on frappe-gantt 0.6. 1.1 draws it white, which left the
+// light title above (and the light text ERPNext's Task popup needs) unreadable. ERPNext's Task
+// popup (gantt_custom_popup_html) is plain <a>/<p>/<span> inside .details-container rather than
+// .title/.subtitle, so it is coloured here too; this replaces the site Client Script "Task Gantt
+// popup contrast". Scoped under .frappe-list because the library's stylesheet loads after the
+// desk's and its own `.gantt-container .popup-wrapper` would otherwise win.
+.frappe-list .gantt-container .popup-wrapper {
+	background: rgba(0, 0, 0, 0.85);
+	color: var(--gray-300);
+
+	.details-container,
+	.details-container p,
+	.details-container span {
+		color: var(--gray-300);
+	}
+
+	.details-container a {
+		color: #fff;
+		text-decoration: underline;
 	}
 }

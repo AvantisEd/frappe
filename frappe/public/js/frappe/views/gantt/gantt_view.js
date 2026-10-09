@@ -346,9 +346,11 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 
 	render_gantt() {
 		const me = this;
-		// The mode a user last picked, else the doctype's Gantt settings' view_mode (avn-main)
+		// The doctype's Gantt settings' view_mode when it sets one, else the mode this user last
+		// picked. A doctype default wins so the chart always opens at the zoom it was designed
+		// for; a change of zoom lasts for the visit (avn-main)
 		const gantt_view_mode =
-			this.view_user_settings.gantt_view_mode || this.calendar_settings.view_mode || "Day";
+			this.calendar_settings.view_mode || this.view_user_settings.gantt_view_mode || "Day";
 		const field_map = this.calendar_settings.field_map;
 		const date_format = "YYYY-MM-DD";
 
@@ -472,6 +474,26 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		}
 		this.setup_view_mode_buttons();
 		this.set_colors();
+		this.fit_gantt();
+	}
+
+	// The list sizes its own result box to end at the paging area; the chart box has to do the
+	// same, or a tall window leaves a gap above the view-mode buttons and a short one pushes
+	// them off the page. Runs on render and, through the list's resize handler, on every window
+	// resize (avn-main).
+	set_result_height() {
+		super.set_result_height();
+		this.fit_gantt();
+	}
+
+	fit_gantt() {
+		const container = this.gantt && this.gantt.$container;
+		const main = document.querySelector(".main-section");
+		if (!container || !main || !container.isConnected) return;
+		const paging = this.$paging_area.is(":visible") ? this.$paging_area.outerHeight(true) : 0;
+		const room =
+			main.getBoundingClientRect().bottom - container.getBoundingClientRect().top - paging - 8;
+		container.style.maxHeight = Math.max(240, Math.floor(room)) + "px";
 	}
 
 	// One drag can move several bars (the library carries a bar's dependants along) and it
