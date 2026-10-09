@@ -20,7 +20,7 @@
             <a
                 {% if (path) { %}
                     href="{{ path }}"
-                    target="{%= item.link_type === "URL" ? "_blank" : "" %}"
+                    target="{%= item.link_type === "URL" && !(path.startsWith("/") && !path.startsWith("//")) ? "_blank" : "" %}"
                 {% } %}
                 class="item-anchor"
                 data-link-type="{{ item.link_type || "" }}"
