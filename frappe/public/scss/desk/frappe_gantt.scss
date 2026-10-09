@@ -39,8 +39,27 @@
 // trackpad swipe with a small sideways component is captured by the container and its
 // vertical movement is dropped. Capping the container's height makes it scroll both ways, and
 // keeps the library's sticky date header in view while scrolling down a long plan.
+//
+// The cap is a max-height because the library writes the full chart height inline on the
+// container (container_height "auto"), which no stylesheet height can override.
 .frappe-list .result .gantt-container {
-	height: min(var(--gv-grid-height), calc(100vh - 240px));
+	max-height: calc(100vh - 240px);
+
+	// The sticky date header is drawn as wide as the timeline. When the timeline is narrower
+	// than the box (Month or Year on a short plan), labels running past its end scrolled up
+	// into the bare strip beside the header; carry its background across the box.
+	.grid-header {
+		min-width: 100%;
+	}
+}
+
+// The list lays its result out as a table so wide report rows can scroll the page sideways. A
+// table is as wide as its content, so the chart's container grew to the whole timeline, nothing
+// was left for it to scroll, and the desk (which clips the page sideways) showed only the left
+// edge of the chart with the view-mode buttons pushed far below. The chart scrolls itself.
+.layout-main-section-wrapper:not(.disable-scrolling) .frappe-list .result-container .result.gantt-result {
+	display: block;
+	width: 100%;
 }
 
 // Undated tasks drawn as placeholder bars (see gantt_view.js prepare_tasks)

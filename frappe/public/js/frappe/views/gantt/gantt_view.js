@@ -362,12 +362,19 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				: null;
 		this._keep_scroll = false;
 
-		this.$result.empty();
+		// a block, not the list's table, so the chart scrolls inside its own box (avn-main)
+		this.$result.empty().addClass("gantt-result");
 		this.gantt = new Gantt(this.$result[0], this.tasks, {
 			bar_height: 35,
 			bar_corner_radius: 4,
 			hover_on_date: true,
 			view_mode: gantt_view_mode,
+			// The library's infinite padding listens to every wheel event, vertical too, and
+			// whenever the view is in the left half of the chart it prepends dates and redraws
+			// the whole chart. Scrolling down a plan then never moved down: each notch slid
+			// the dates sideways instead. A chart over the tasks' dates plus the view mode's
+			// padding, as before 1.1, scrolls normally (avn-main).
+			infinite_padding: false,
 			date_format: "YYYY-MM-DD",
 			readonly: !me.can_write,
 			readonly_progress: this.progress_disabled,
@@ -437,8 +444,8 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			},
 		});
 
-		// The library rebuilds bars and arrows on every render (view-mode change, and while
-		// scrolling past either edge with infinite padding), so decorate after each (avn-main)
+		// The library rebuilds bars and arrows on every render (a view-mode change, say), so
+		// decorate after each (avn-main)
 		const render = this.gantt.render.bind(this.gantt);
 		this.gantt.render = () => {
 			render();
@@ -594,9 +601,22 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	// The library scrolls the chart to today, which can hide the avatars of a task starting
 	// at the left edge of the view; nudge left far enough to show the widest group. Only on a
 	// fresh render: an in-place redraw restores its own scroll position (avn-main).
+	//
+	// That scroll is smooth, so it has barely started when this runs, and any write to
+	// scrollLeft cancels it: adjusting the live position left the chart at its far left with
+	// today off the right edge. So scroll to today ourselves, instantly, from where the library
+	// drew its today line (absent when today is outside the chart, so stay where it put us).
 	reveal_first_assignees() {
+		const container = this.gantt.$container;
+		const today = container.querySelector(".current-highlight");
+		const left = today
+			? parseFloat(today.style.left) - this.gantt.config.column_width / 6
+			: container.scrollLeft;
 		const widest = Math.max(0, ...this.gantt.bars.map((bar) => bar.assignees_width || 0));
-		if (widest) this.gantt.$container.scrollLeft -= widest + 24;
+		container.scrollTo({
+			left: Math.max(0, left - (widest ? widest + 24 : 0)),
+			behavior: "instant",
+		});
 	}
 
 	// ---- Dependency editing (avn-main) --------------------------------------------------
