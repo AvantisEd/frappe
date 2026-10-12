@@ -1,6 +1,7 @@
 {% if (contact_list.length) { %}
 	<div class="card-list-actions">
 		{%= frappe.ui.button.html({ label: __("Contact"), icon: "plus", size: "sm", css_class: "btn-contact" }) %}
+		{%= frappe.ui.button.html({ label: __("Link Existing"), icon: "link", size: "sm", css_class: "btn-link-contact" }) %}
 	</div>
 {% } %}
 
@@ -52,6 +53,9 @@
 	{%= frappe.ui.empty_state.html({
 		icon: "user",
 		title: __("No contacts added yet"),
-		actions: [{ label: __("New Contact"), icon: "plus", css_class: "btn-contact" }],
+		actions: [
+			{ label: __("New Contact"), icon: "plus", css_class: "btn-contact" },
+			{ label: __("Link Existing Contact"), icon: "link", css_class: "btn-link-contact" },
+		],
 	}) %}
 {% } %}

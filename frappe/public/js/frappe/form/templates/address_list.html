@@ -1,6 +1,7 @@
 {% if (addr_list.length) { %}
 	<div class="card-list-actions">
 		{%= frappe.ui.button.html({ label: __("Address"), icon: "plus", size: "sm", css_class: "btn-address" }) %}
+		{%= frappe.ui.button.html({ label: __("Link Existing"), icon: "link", size: "sm", css_class: "btn-link-address" }) %}
 	</div>
 {% } %}
 
@@ -26,6 +27,9 @@
 	{%= frappe.ui.empty_state.html({
 		icon: "map-pin",
 		title: __("No addresses added yet"),
-		actions: [{ label: __("New Address"), icon: "plus", css_class: "btn-address" }],
+		actions: [
+			{ label: __("New Address"), icon: "plus", css_class: "btn-address" },
+			{ label: __("Link Existing Address"), icon: "link", css_class: "btn-link-address" },
+		],
 	}) %}
 {% } %}

@@ -170,6 +170,9 @@ select.form-control {
 	}
 
 	.card-list-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--margin-xs);
 		margin-bottom: var(--margin-sm);
 	}
 

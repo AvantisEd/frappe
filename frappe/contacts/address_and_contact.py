@@ -17,6 +17,24 @@ def load_address_and_contact(doc, key=None) -> None:
 
 
 @frappe.whitelist()
+def add_link(doctype: str, name: str, link_doctype: str, link_name: str) -> None:
+	"""Link an existing Address or Contact to a document."""
+	if doctype not in ("Address", "Contact"):
+		frappe.throw(_("Can only link an Address or a Contact"))
+
+	frappe.has_permission(link_doctype, "read", doc=link_name, throw=True)
+
+	doc = frappe.get_doc(doctype, name)
+	doc.check_permission("write")
+
+	if doc.has_link(link_doctype, link_name):
+		return
+
+	doc.append("links", {"link_doctype": link_doctype, "link_name": link_name})
+	doc.save()
+
+
+@frappe.whitelist()
 def remove_link(doctype: str, name: str, link_doctype: str, link_name: str) -> None:
 	"""Remove the link between an Address or Contact and the document it is linked to."""
 	if doctype not in ("Address", "Contact"):

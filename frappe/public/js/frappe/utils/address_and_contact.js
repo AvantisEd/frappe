@@ -85,6 +85,7 @@ const ADDRESS_CONTACT_GROUPS = [
 		onload_key: "addr_list",
 		template: "address_list",
 		button_selector: ".btn-address",
+		link_button_selector: ".btn-link-address",
 		primary_flag: "is_primary_address",
 	},
 	{
@@ -93,6 +94,7 @@ const ADDRESS_CONTACT_GROUPS = [
 		onload_key: "contact_list",
 		template: "contact_list",
 		button_selector: ".btn-contact",
+		link_button_selector: ".btn-link-contact",
 		primary_flag: "is_primary_contact",
 	},
 ];
@@ -100,7 +102,15 @@ const ADDRESS_CONTACT_GROUPS = [
 class AddressContactController {
 	constructor(
 		frm,
-		{ doctype, wrapper_field, onload_key, template, button_selector, primary_flag }
+		{
+			doctype,
+			wrapper_field,
+			onload_key,
+			template,
+			button_selector,
+			link_button_selector,
+			primary_flag,
+		}
 	) {
 		this.frm = frm;
 		this.doctype = doctype;
@@ -108,6 +118,7 @@ class AddressContactController {
 		this.onload_key = onload_key;
 		this.template = template;
 		this.button_selector = button_selector;
+		this.link_button_selector = link_button_selector;
 		this.primary_flag = primary_flag;
 	}
 
@@ -149,6 +160,7 @@ class AddressContactController {
 		);
 
 		$wrapper.find(this.button_selector).on("click", () => this.create_record());
+		$wrapper.find(this.link_button_selector).on("click", () => this.link_existing());
 		this.bind_card_menus($wrapper);
 	}
 
@@ -170,8 +182,8 @@ class AddressContactController {
 		const is_primary = record.name === this.primary_name;
 		return [
 			{
-				label: __("Edit"),
-				icon: "pen",
+				label: __("Open Link"),
+				icon: "arrow-right",
 				onclick: () => frappe.set_route("Form", this.doctype, record.name),
 			},
 			{
@@ -251,6 +263,46 @@ class AddressContactController {
 		return (this.frm.meta.fields || [])
 			.filter((df) => df.fetch_from?.split(".")[0] === primary_field)
 			.map((df) => df.fieldname);
+	}
+
+	link_existing() {
+		const linked = this.records.map((record) => record.name);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Link Existing {0}", [__(this.doctype)]),
+			fields: [
+				{
+					fieldname: "name",
+					fieldtype: "Link",
+					options: this.doctype,
+					label: __(this.doctype),
+					reqd: 1,
+					get_query: () => ({ filters: { name: ["not in", linked] } }),
+				},
+			],
+			primary_action_label: __("Link"),
+			primary_action: ({ name }) => {
+				dialog.hide();
+				this.add_link(name);
+			},
+		});
+		dialog.show();
+	}
+
+	add_link(name) {
+		return frappe
+			.xcall("frappe.contacts.address_and_contact.add_link", {
+				doctype: this.doctype,
+				name,
+				link_doctype: this.frm.doctype,
+				link_name: this.frm.docname,
+			})
+			.then(() => {
+				frappe.show_alert({
+					message: __("{0} linked", [__(this.doctype)]),
+					indicator: "green",
+				});
+				this.frm.reload_doc();
+			});
 	}
 
 	unlink(record) {
