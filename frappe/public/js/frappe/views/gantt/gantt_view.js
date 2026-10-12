@@ -423,27 +423,9 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 					gantt_view_mode: mode.name,
 				});
 			},
-			popup: ({ task }) => {
-				// the dependency popup borrows the library's popup (avn-main)
-				if (me._arrow_popup_html) return me._arrow_popup_html;
-
-				var item = me.get_item(task.id);
-				var dates = task.placeholder
-					? __("Dates not set: drag the bar to set them")
-					: `${moment(task._start).format("MMM D")} - ${moment(task.end).format(
-							"MMM D"
-					  )}`;
-				var html = `<div class="title">${frappe.utils.escape_html(task.name)}</div>
-					<div class="subtitle">${dates}</div>`;
-
-				// custom html in doctype settings
-				var custom = me.settings.gantt_custom_popup_html;
-				if (custom && $.isFunction(custom)) {
-					var ganttobj = task;
-					html = custom(ganttobj, item);
-				}
-				return '<div class="details-container">' + html + "</div>";
-			},
+			// No popup: a bar's details are a double-click away on its form, and a dependency
+			// is removed by double-clicking its arrow (avn-main)
+			popup: false,
 		});
 
 		// The library rebuilds bars and arrows on every render (a view-mode change, say), so
@@ -645,19 +627,13 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	// The library draws arrows from task.dependencies and offers no way to change them.
 	// Everything below decorates its rendered SVG: a link handle at each end of every bar (drag
 	// one onto another bar to create a finish-to-start dependency) and a fat invisible twin of
-	// every arrow so it can be clicked, selected and removed from a popup. Persistence goes
+	// every arrow so it can be hovered (highlight and a tooltip) and double-clicked to remove. Persistence goes
 	// through frappe.client.insert / delete on the child table, so the parent document's
 	// validate and on_update run exactly as they do from the form.
 
 	setup_dependency_editing() {
 		if (!this.dependency_config || !this.can_write) return;
 		const gantt = this.gantt;
-
-		const hide_popup = gantt.hide_popup.bind(gantt);
-		gantt.hide_popup = () => {
-			hide_popup();
-			this.unselect_arrows();
-		};
 
 		// While the library moves or resizes a bar our handles cannot follow it, so hide them
 		// for the duration (CSS on .bar-moving) and put everything back on mouseup. A link-handle
@@ -678,14 +654,6 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		};
 		// document, not svg: a drag may end outside the chart (the library resets there too)
 		document.addEventListener("mouseup", this._dependency_mouseup);
-
-		$(gantt.$popup_wrapper)
-			.off("click.dependency")
-			.on("click.dependency", ".remove-dependency", (e) => {
-				e.preventDefault();
-				const $btn = $(e.currentTarget);
-				this.remove_dependency($btn.attr("data-from"), $btn.attr("data-to"));
-			});
 	}
 
 	decorate_gantt() {
@@ -739,7 +707,6 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	// Drag from a bar's START handle onto another bar: this bar will depend on that one.
 	start_link_drag(bar, role) {
 		const gantt = this.gantt;
-		gantt.hide_popup();
 		const handle = bar.link_handles[role];
 		const origin = { x: +handle.getAttribute("cx"), y: +handle.getAttribute("cy") };
 		const line = svg_el(
@@ -769,11 +736,15 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			gantt.$svg.classList.remove("linking");
 			this.highlight_drop_target(null);
 			document.removeEventListener("mousemove", move);
-			document.removeEventListener("mouseup", finish);
+			document.removeEventListener("mouseup", finish, true);
 			document.removeEventListener("keydown", cancel);
 		};
 		document.addEventListener("mousemove", move);
-		document.addEventListener("mouseup", finish);
+		// capture phase: a drop on the target's own link handle must end the drag too, and
+		// the handle stops its mouseup from bubbling (so the library never sees it as a
+		// click on the bar). Heard only on bubbling, that drop left the line hanging and the
+		// next press on a handle started a second one.
+		document.addEventListener("mouseup", finish, true);
 		document.addEventListener("keydown", cancel);
 	}
 
@@ -817,15 +788,28 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	}
 
 	bind_arrow(arrow) {
-		// the visible arrow is a thin stroke; give it an invisible fat twin to click on
+		// the visible arrow is a thin stroke; give it an invisible fat twin to point at
 		arrow.hit = svg_el(
 			"path",
 			{ class: "arrow-hit", d: arrow.element.getAttribute("d") },
 			this.gantt.layers.arrow
 		);
-		arrow.hit.addEventListener("click", (e) => {
+		const from = arrow.from_task.task.id;
+		const to = arrow.to_task.task.id;
+		// a native tooltip says what the arrow means and how to remove it
+		const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+		title.textContent = __("{0} must finish before {1} can start. Double-click to remove.", [
+			this.task_label(from),
+			this.task_label(to),
+		]);
+		arrow.hit.appendChild(title);
+		arrow.hit.addEventListener("mouseenter", () => arrow.element.classList.add("active"));
+		arrow.hit.addEventListener("mouseleave", () => arrow.element.classList.remove("active"));
+		// a click must not fall through to the chart (it would deselect bars, or add a ToDo)
+		arrow.hit.addEventListener("click", (e) => e.stopPropagation());
+		arrow.hit.addEventListener("dblclick", (e) => {
 			e.stopPropagation();
-			this.select_arrow(arrow, e);
+			this.remove_dependency(from, to);
 		});
 		// keep the twin on the arrow when the library re-routes it during a drag
 		const update = arrow.update.bind(arrow);
@@ -835,41 +819,11 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		};
 	}
 
-	select_arrow(arrow, e) {
-		this.gantt.unselect_all();
-		this.unselect_arrows();
-		arrow.element.classList.add("active");
-		this.show_arrow_popup(arrow, e);
-	}
-
-	unselect_arrows() {
-		(this.gantt.arrows || []).forEach((a) => a.element.classList.remove("active"));
-	}
-
+	// Plain text: it goes into a tooltip and a toast, never parsed as HTML here
 	task_label(id) {
 		const item = this.get_item(id);
 		const title = item && this.meta.title_field && item[this.meta.title_field];
-		return frappe.utils.escape_html(title ? `${title} (${id})` : id);
-	}
-
-	show_arrow_popup(arrow, e) {
-		const from = arrow.from_task.task;
-		const to = arrow.to_task.task;
-		this._arrow_popup_html = `<div class="details-container dependency-popup">
-			<div class="title">${__("Dependency")}</div>
-			<div class="subtitle">${__("{0} must finish before {1} can start", [
-				`<b>${this.task_label(from.id)}</b>`,
-				`<b>${this.task_label(to.id)}</b>`,
-			])}</div>
-			<button class="btn btn-xs btn-default remove-dependency"
-				data-from="${from.id}" data-to="${to.id}">${__("Remove dependency")}</button>
-		</div>`;
-		const p = this.svg_point(e);
-		try {
-			this.gantt.show_popup({ x: p.x, y: p.y, task: to, target: arrow.hit });
-		} finally {
-			this._arrow_popup_html = null;
-		}
+		return title ? `${title} (${id})` : id;
 	}
 
 	// Re-fetch and redraw after the chart itself changed a document (dependency, dates),
@@ -914,7 +868,6 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 
 	remove_dependency(from_id, to_id) {
 		const cfg = this.dependency_config;
-		this.gantt.hide_popup();
 		return frappe
 			.xcall("frappe.client.get_list", {
 				doctype: cfg.child_doctype,
@@ -931,7 +884,19 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 					name: rows[0].name,
 				});
 			})
-			.then(() => frappe.show_alert({ message: __("Dependency removed"), indicator: "green" }))
+			.then(() =>
+				// removed at once on a double-click, so a slip is one click to put back
+				frappe.show_alert(
+					{
+						message: `${__("Dependency removed")} · <a data-action="undo">${__(
+							"Undo"
+						)}</a>`,
+						indicator: "green",
+					},
+					10,
+					{ undo: () => this.add_dependency(from_id, to_id) }
+				)
+			)
 			.finally(() => this.refresh_in_place());
 	}
 

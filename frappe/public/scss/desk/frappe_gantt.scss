@@ -157,19 +157,6 @@
 	}
 }
 
-.gantt-container .popup-wrapper .dependency-popup {
-	min-width: 220px;
-
-	.subtitle {
-		margin-bottom: 0.5rem;
-		white-space: normal;
-	}
-
-	.btn {
-		width: 100%;
-	}
-}
-
 // Assignee avatars left of each bar (see gantt_view.js draw_assignees). The holder is wider
 // than most groups need, so it lets clicks through to the arrows beneath it; only the avatars
 // themselves take the pointer (a tooltip with the name, a click to filter).
