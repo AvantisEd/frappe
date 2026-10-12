@@ -21,6 +21,7 @@ from frappe import _
 from frappe.core.doctype.server_script.server_script_utils import get_server_script_map
 from frappe.database.utils import DefaultOrderBy, FallBackDateTimeStr, NestedSetHierarchy
 from frappe.model import OPTIONAL_FIELDS, get_permitted_fields
+from frappe.model.current_user_filter import resolve_current_user
 from frappe.model.meta import get_table_columns
 from frappe.model.utils import is_virtual_doctype
 from frappe.model.utils.user_settings import get_user_settings, update_user_settings
@@ -815,6 +816,9 @@ from {tables}
 		meta = self.get_meta(f.doctype)
 		df = meta.get("fields", {"fieldname": f.fieldname})
 		df = df[0] if df else None
+
+		# `@me`: the signed-in user, for fields holding user ids (current_user_filter.py)
+		f.value = resolve_current_user(f.doctype, f.fieldname, f.value)
 
 		# _assign and _liked_by store a JSON array of user ids, so `=`/`!=` never match a
 		# single member; treat them as `like`/`not like` against the serialized value.

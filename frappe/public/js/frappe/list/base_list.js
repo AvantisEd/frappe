@@ -962,7 +962,11 @@ class FilterArea {
 		let dropdown_items_html = "";
 
 		fields.map((field) => {
-			if (field.name === applied_filter) {
+			// the "Me" row applies @me, so a layout saved from it means whoever opens it
+			const is_applied =
+				field.name === applied_filter ||
+				(applied_filter === "@me" && field.name === frappe.session.user);
+			if (is_applied) {
 				applied_filter_html = this.get_dropdown_html(field, fieldtype, true);
 			} else {
 				dropdown_items_html += this.get_dropdown_html(field, fieldtype);
@@ -987,7 +991,12 @@ class FilterArea {
 		} else {
 			label = __(field.name);
 		}
-		let value = field.name == null ? "" : encodeURIComponent(field.name);
+		// "Me" filters on @me, resolved to the signed-in user by the server on every
+		// query (frappe/model/current_user_filter.py), not on this user's own id
+		let value =
+			field.name == null
+				? ""
+				: encodeURIComponent(field.name === frappe.session.user ? "@me" : field.name);
 		let applied_html = applied
 			? `<span class="applied"> ${frappe.utils.icon("check", "xs")} </span>`
 			: "";

@@ -22,6 +22,7 @@ from frappe.database.utils import (
 from frappe.model import CORE_DOCTYPES as PERMITTED_CORE_DOCTYPES
 from frappe.model import OPTIONAL_FIELDS, get_permitted_fields
 from frappe.model.base_document import DOCTYPES_FOR_DOCTYPE
+from frappe.model.current_user_filter import resolve_current_user
 from frappe.model.document import Document
 from frappe.query_builder import Criterion, Field, Order, functions
 from frappe.query_builder.custom import Month, MonthName, Quarter, Year
@@ -569,6 +570,9 @@ class Engine:
 			value = resolved.get("value", value)
 
 		_field = self._validate_and_prepare_filter_field(field, doctype)
+
+		if not isinstance(value, Field):
+			value = resolve_current_user(doctype or self.doctype, field, value)
 
 		if isinstance(value, Field):
 			_value = value
