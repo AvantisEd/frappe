@@ -106,8 +106,33 @@
 	}
 }
 
+// A click in the empty grid no longer creates anything (gantt_view.js), so drop upstream's
+// "copy" cursor there. The "new task" link after a group's label is the way in.
+.gantt .grid-column:hover {
+	cursor: default;
+}
+
+.gantt .bar-wrapper.bar-group .bar-label {
+	.new-task-sep {
+		fill: var(--text-muted);
+		font-weight: normal;
+	}
+
+	// link blue, so it reads as something to click
+	.new-task-link {
+		fill: var(--blue-500);
+		font-weight: normal;
+		pointer-events: all;
+		cursor: pointer;
+
+		&:hover {
+			text-decoration: underline;
+		}
+	}
+}
+
 // Dependency editing: link handles on the bar ends, the line drawn while dragging one, a fat
-// invisible twin of each arrow to click on, and the popup that offers to remove an arrow.
+// invisible twin of each arrow to hover and double-click.
 .gantt {
 	.link-handle {
 		fill: var(--gray-600);
@@ -172,6 +197,12 @@
 
 	.avatar {
 		pointer-events: auto;
+	}
+
+	// a slight overlap, so a holder's initials still read at a glance (gantt_view.js
+	// ASSIGNEE_OVERLAP keeps the group's width in step)
+	.avatar + .avatar {
+		margin-left: -3px;
 	}
 }
 

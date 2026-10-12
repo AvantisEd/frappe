@@ -22,6 +22,9 @@ function svg_el(tag, attrs, parent) {
 // head of an incoming arrow. A task in the chart's first column has no room there, so its
 // avatars stay on the chart and overlap the start of the bar instead of being cut off.
 const ASSIGNEE_GROUP_WIDTH = 120;
+// each avatar is 28px and overlaps the one before by 3px (frappe_gantt.scss)
+const ASSIGNEE_AVATAR = 28;
+const ASSIGNEE_OVERLAP = 3;
 function place_assignees(bar) {
 	if (!bar.$assignees) return;
 	const right = Math.max(bar.$bar.getX() - 20, bar.assignees_width + 2);
@@ -31,7 +34,8 @@ function place_assignees(bar) {
 
 // AvantisEd (avn-main) extends upstream's Gantt view with: tree doctypes drawn as a tree
 // (groups as summary bars over their children), undated tasks shown as placeholder bars,
-// dependency editing (link handles, clickable arrows), assignee avatars, a doctype hook for
+// dependency editing (link handles, clickable arrows), a "New task" link on each group,
+// assignee avatars, a doctype hook for
 // bar colour / default zoom / extra fields, saves serialised one at a time, and 500 rows.
 // Each is marked "avn-main" below. Ported from frappe-gantt 0.6 to 1.1 on 2026-10-09.
 frappe.views.GanttView = class GanttView extends frappe.views.ListView {
@@ -148,6 +152,22 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			}
 		});
 		return fields;
+	}
+
+	// Ties on the sort field go newest first (avn-main). Upstream breaks them by name in the
+	// sort's own direction, so with start date ascending the oldest task led - and a task
+	// just added from a group's "new task" link, which starts where its group does, landed
+	// after its siblings instead of right under the group heading.
+	get_args() {
+		const args = super.get_args();
+		const sort_by = this.sort_selector && this.sort_selector.sort_by;
+		if (sort_by && !["name", "creation", "modified"].includes(sort_by)) {
+			const table = "`tab" + this.doctype + "`";
+			args.order_by =
+				`${table}.\`${sort_by}\` ${this.sort_selector.sort_order}, ` +
+				`${table}.\`creation\` desc, ${table}.\`name\` desc`;
+		}
+		return args;
 	}
 
 	get parent_field() {
@@ -384,22 +404,25 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			on_double_click: (task) => {
 				frappe.set_route("Form", task.doctype, task.id);
 			},
-			on_date_click: (date) => {
-				if (date) frappe.new_doc("ToDo", { date: new Date(date) });
-			},
+			// no on_date_click: upstream opened a new ToDo form on any click in the grid. New
+			// tasks come from the "new task" link on a group instead (avn-main)
 			on_date_change: (task, start, end) => {
 				if (!me.can_write) return;
 				// A summary bar's dates are its children's (avn-main); the drag is blocked below
 				if (task.is_group) return;
-				me.queue_save(task, {
-					[field_map.start]: moment(start).format(date_format),
-					[field_map.end]: moment(end).format(date_format),
-				}).then(() => {
-					// Redraw from the saved data when the chart cannot update itself: a
-					// placeholder now has real dates, and a child's move changes the span its
-					// group's summary bar is drawn from (avn-main)
-					if (task.placeholder || task.parent_id) me.schedule_refresh_in_place();
+				// The library reports this on every mousemove of a drag, not once at the end,
+				// so hold the latest dates per task and save them when the button comes up
+				// (setup_drag_saves). Saving as it went fired a request per pixel, and the
+				// redraw a group child's save schedules ran as soon as the pointer paused,
+				// rebuilding the chart under a drag still in progress (avn-main).
+				me.pending_dates.set(task.id, {
+					task,
+					values: {
+						[field_map.start]: moment(start).format(date_format),
+						[field_map.end]: moment(end).format(date_format),
+					},
 				});
+				if (!me.pointer_down) me.save_pending_dates();
 			},
 			on_progress_change: (task, progress) => {
 				if (!me.can_write) return;
@@ -446,6 +469,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			},
 			true
 		);
+		this.setup_drag_saves();
 		this.setup_dependency_editing();
 		this.after_gantt_render();
 		this.reveal_first_assignees();
@@ -487,6 +511,38 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		const save = () => frappe.db.set_value(task.doctype, task.id, values);
 		this._save_chain = (this._save_chain || Promise.resolve()).then(save, save);
 		return this._save_chain;
+	}
+
+	// A press anywhere on the chart may become a drag: hold its date changes until release.
+	// document, not svg: a drag may end outside the chart (avn-main)
+	setup_drag_saves() {
+		this.pending_dates = this.pending_dates || new Map();
+		this.pointer_down = false;
+		this.gantt.$svg.addEventListener("mousedown", () => (this.pointer_down = true), true);
+		if (this._drag_saves_mouseup) {
+			document.removeEventListener("mouseup", this._drag_saves_mouseup);
+		}
+		this._drag_saves_mouseup = () => {
+			if (!this.pointer_down) return;
+			this.pointer_down = false;
+			// after the library's own mouseup on the svg, which reports the final dates
+			setTimeout(() => this.save_pending_dates());
+		};
+		document.addEventListener("mouseup", this._drag_saves_mouseup);
+	}
+
+	save_pending_dates() {
+		if (!this.pending_dates || !this.pending_dates.size) return;
+		const changes = [...this.pending_dates.values()];
+		this.pending_dates.clear();
+		changes.forEach(({ task, values }) =>
+			this.queue_save(task, values).then(() => {
+				// Redraw from the saved data when the chart cannot update itself: a
+				// placeholder now has real dates, and a child's move changes the span its
+				// group's summary bar is drawn from
+				if (task.placeholder || task.parent_id) this.schedule_refresh_in_place();
+			})
+		);
 	}
 
 	// several saves from one drag -> one redraw, once they have all landed
@@ -552,8 +608,61 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				);
 			});
 			bar.update_label_position();
+			this.add_new_task_link(bar);
 		});
 		this.gantt.arrows.forEach((arrow) => arrow.update());
+	}
+
+	// "· new task" after a group's label (avn-main): adds a child at once - no form - named
+	// "New task", one day long from the group's start, and redraws with it first under the
+	// group (the sort breaks ties newest first, get_args). Double-click its bar to edit it.
+	add_new_task_link(bar) {
+		if (!this.parent_field || !frappe.model.can_create(this.doctype)) return;
+		const label = bar.group.querySelector(".bar-label");
+		if (!label || label.querySelector(".new-task-link")) return;
+		svg_el("tspan", { class: "new-task-sep" }, label).textContent = " · ";
+		const link = svg_el("tspan", { class: "new-task-link" }, label);
+		link.textContent = __("new task");
+		// the group's own handlers: a press would start a drag, a double-click open the form
+		["mousedown", "mouseup", "dblclick"].forEach((ev) =>
+			link.addEventListener(ev, (e) => e.stopPropagation())
+		);
+		link.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.add_child_task(bar.task);
+		});
+	}
+
+	async add_child_task(group) {
+		if (this._adding_task) return;
+		this._adding_task = true;
+		try {
+			const field_map = this.calendar_settings.field_map || DEFAULT_FIELD_MAP;
+			const start = moment(group._start).format("YYYY-MM-DD");
+			const doc = {
+				doctype: this.doctype,
+				[this.parent_field]: group.id,
+				[field_map.start]: start,
+			};
+			if (field_map.end) doc[field_map.end] = start;
+			const title_field = field_map.title || this.meta.title_field;
+			if (title_field) doc[title_field] = __("New task");
+			// the child belongs to the group's project, if the doctype has one
+			if (this.meta.fields.some((f) => f.fieldname === "project")) {
+				const { message } = await frappe.db.get_value(this.doctype, group.id, "project");
+				if (message && message.project) doc.project = message.project;
+			}
+			await frappe.xcall("frappe.client.insert", { doc });
+			frappe.show_alert({
+				message: __("New task added under {0}: double-click it to edit", [
+					frappe.utils.escape_html(group.name),
+				]),
+				indicator: "green",
+			});
+			await this.refresh_in_place();
+		} finally {
+			this._adding_task = false;
+		}
 	}
 
 	// Who holds each task (avn-main): the Kanban card's avatar group, left of the bar. SVG
@@ -586,7 +695,8 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				{ class: "assignees", width: ASSIGNEE_GROUP_WIDTH, height: bar.height },
 				layer
 			);
-			// side by side, not overlapped as on a Kanban card: initials must read at a glance
+			// barely overlapped (frappe_gantt.scss), not as much as on a Kanban card: initials
+			// must read at a glance
 			holder.appendChild(
 				frappe.avatar_group(users, 3, {
 					align: "left",
@@ -596,7 +706,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			);
 			// avatar_group shows 3 and a "+N" chip, or all 4 when there is only one more
 			const shown = Math.min(users.length, 4);
-			bar.assignees_width = shown * 28;
+			bar.assignees_width = shown * ASSIGNEE_AVATAR - (shown - 1) * ASSIGNEE_OVERLAP;
 			bar.$assignees = holder;
 			place_assignees(bar);
 		});
@@ -805,7 +915,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		arrow.hit.appendChild(title);
 		arrow.hit.addEventListener("mouseenter", () => arrow.element.classList.add("active"));
 		arrow.hit.addEventListener("mouseleave", () => arrow.element.classList.remove("active"));
-		// a click must not fall through to the chart (it would deselect bars, or add a ToDo)
+		// a click must not fall through to the chart (it would deselect bars)
 		arrow.hit.addEventListener("click", (e) => e.stopPropagation());
 		arrow.hit.addEventListener("dblclick", (e) => {
 			e.stopPropagation();
