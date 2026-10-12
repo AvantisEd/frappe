@@ -108,13 +108,28 @@ export default class NumberCardWidget extends Widget {
 	}
 
 	set_route_for_custom_card() {
-		if (!this.data?.route) return;
+		const { route, route_options, reset_filters } = this.data || {};
+		if (!route) return;
 
-		if (this.data.route_options) {
-			frappe.route_options = this.data.route_options;
+		const go = () => {
+			if (route_options) {
+				frappe.route_options = route_options;
+			}
+			frappe.set_route(route);
+		};
+
+		// `reset_filters`: open the list as it is, not as this user last left it. A list
+		// restores the user's saved filters and layout, which an empty route_options does
+		// not override, so clear them first (as the view switcher's Default Layout does)
+		// and route once the save has landed.
+		const doctype = Array.isArray(route) && route[0] === "List" ? route[1] : null;
+		if (!reset_filters || !doctype) {
+			go();
+			return;
 		}
-
-		frappe.set_route(this.data.route);
+		frappe.model.user_settings
+			.save(doctype, "List", { filters: [], active_layout_name: "" })
+			.then(go, go);
 	}
 
 	set_doc_args() {
@@ -198,7 +213,12 @@ export default class NumberCardWidget extends Widget {
 	get_number_for_custom_card(res) {
 		if (typeof res === "object") {
 			this.number = res.value;
-			this.set_formatted_number(res);
+			// a card may say it in its own words ("2 / 8"); shown as given
+			if (res.formatted_value != null) {
+				this.formatted_number = res.formatted_value;
+			} else {
+				this.set_formatted_number(res);
+			}
 		} else {
 			this.formatted_number = res;
 		}
