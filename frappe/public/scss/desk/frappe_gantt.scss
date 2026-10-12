@@ -87,6 +87,8 @@
 	&.active .bar {
 		fill: var(--gray-700);
 		stroke: none;
+		// the library frames every bar with a row-border outline
+		outline: none;
 	}
 
 	.group-cap {
