@@ -23,6 +23,13 @@ function in_shell(path, shell) {
 	const slug = frappe.router.shell_slug(shell);
 	if (route === slug || route.startsWith(slug + "/")) return path;
 
+	// A shell that is also a doctype cannot go in front, the same exception
+	// `write_shell_into_url` makes: `/desk/workflow/workflow-action` reads back as the Workflow
+	// named `workflow-action`, not the Workflow Action list (see `take_shell_from`). Written
+	// here anyway, every link in the Workflow shell's own sidebar opened a form that did not
+	// exist. Left bare, the link arrives as `/desk/workflow-action` and routes on its own.
+	if (frappe.router.segment_kind(slug) === "doctype") return path;
+
 	return "/desk/" + slug + "/" + route + rest;
 }
 
