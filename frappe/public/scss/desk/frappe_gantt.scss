@@ -106,6 +106,17 @@
 	}
 }
 
+// A fixed bar (the doctype's is_fixed, see gantt_view.js prepare_tasks): no moving or resizing,
+// so no resize handles and no grab cursor. The progress handle stays.
+.gantt .bar-wrapper.bar-fixed {
+	cursor: default;
+
+	.handle.left,
+	.handle.right {
+		display: none;
+	}
+}
+
 // A click in the empty grid no longer creates anything (gantt_view.js), so drop upstream's
 // "copy" cursor there. The "new task" link after a group's label is the way in.
 .gantt .grid-column:hover {

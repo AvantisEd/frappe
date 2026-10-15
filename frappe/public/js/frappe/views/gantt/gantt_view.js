@@ -35,8 +35,8 @@ function place_assignees(bar) {
 // AvantisEd (avn-main) extends upstream's Gantt view with: tree doctypes drawn as a tree
 // (groups as summary bars over their children), undated tasks shown as placeholder bars,
 // dependency editing (link handles, clickable arrows), a "New task" link on each group,
-// assignee avatars, a doctype hook for
-// bar colour / default zoom / extra fields, saves serialised one at a time, and 500 rows.
+// assignee avatars, doctype hooks for bar colour / default zoom / extra fields / a bar that
+// is fixed (no date drag) / a bar's end date, saves serialised one at a time, and 500 rows.
 // Each is marked "avn-main" below. Ported from frappe-gantt 0.6 to 1.1 on 2026-10-09.
 frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 	get view_name() {
@@ -188,6 +188,12 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		// its color field. Derived at render time, so a status written without a save (ERPNext's
 		// overdue job uses db_set) still colours the bar.
 		const get_color = this.calendar_settings.get_color;
+		// A bar's end (avn-main): get_end(item) -> date may replace the end field, e.g. a
+		// finished task ends on the day it was completed rather than the day it was expected
+		// to. A bar that is fixed (is_fixed(item) -> bool) cannot be moved or resized here: its
+		// dates are history, and the form is where they are corrected.
+		const get_end = this.calendar_settings.get_end;
+		const is_fixed = this.calendar_settings.is_fixed;
 		const today = frappe.datetime.get_today();
 
 		if (!this.data[0]?.[field_map.progress]) {
@@ -230,10 +236,12 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			// date is drawn instead: one day at whichever date it has, else today, dashed, and
 			// dragging it sets the dates it lacks.
 			let start = item[field_map.start];
-			let end = item[field_map.end];
+			let end = (get_end && get_end(item)) || item[field_map.end];
 			const placeholder = !start || !end;
 			start = start || end || today;
 			end = end || start;
+			// finished before it was expected to start: the bar runs to the end, not backwards
+			if (end < start) start = end;
 
 			const r = {
 				start: start,
@@ -244,6 +252,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 				progress: progress,
 				dependencies: "",
 				placeholder: placeholder,
+				fixed: !!(is_fixed && is_fixed(item)),
 			};
 
 			if (field_map.depends_on) {
@@ -408,8 +417,9 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			// tasks come from the "new task" link on a group instead (avn-main)
 			on_date_change: (task, start, end) => {
 				if (!me.can_write) return;
-				// A summary bar's dates are its children's (avn-main); the drag is blocked below
-				if (task.is_group) return;
+				// A summary bar's dates are its children's, and a fixed bar's are history
+				// (avn-main); both drags are blocked below
+				if (task.is_group || task.fixed) return;
 				// The library reports this on every mousemove of a drag, not once at the end,
 				// so hold the latest dates per task and save them when the button comes up
 				// (setup_drag_saves). Saving as it went fired a request per pixel, and the
@@ -458,17 +468,25 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 			render();
 			this.after_gantt_render();
 		};
-		// A summary bar's dates are its children's: moving or resizing it means nothing, so
-		// the drag never reaches the library (capture phase, before its delegated handler).
+		// A summary bar's dates are its children's: moving or resizing it means nothing. A
+		// fixed bar's dates are history. So neither drag reaches the library (capture phase,
+		// before its delegated handler).
 		this.gantt.$svg.addEventListener(
 			"mousedown",
 			(e) => {
-				if (e.target.closest && e.target.closest(".bar-wrapper.bar-group")) {
+				if (
+					e.target.closest &&
+					e.target.closest(".bar-wrapper.bar-group, .bar-wrapper.bar-fixed")
+				) {
 					e.stopPropagation();
 				}
 			},
 			true
 		);
+		// The library carries a bar's dependants along with a drag; a fixed one stays put
+		const dependants = this.gantt.get_all_dependent_tasks.bind(this.gantt);
+		this.gantt.get_all_dependent_tasks = (id) =>
+			dependants(id).filter((dep) => !this.gantt.get_task(dep)?.fixed);
 		this.setup_drag_saves();
 		this.setup_dependency_editing();
 		this.after_gantt_render();
@@ -563,6 +581,7 @@ frappe.views.GanttView = class GanttView extends frappe.views.ListView {
 		this.gantt.bars.forEach((bar) => {
 			bar.group.classList.toggle("bar-group", !!bar.task.is_group);
 			bar.group.classList.toggle("bar-placeholder", !!bar.task.placeholder);
+			bar.group.classList.toggle("bar-fixed", !!bar.task.fixed);
 		});
 	}
 
