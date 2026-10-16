@@ -237,16 +237,10 @@ function skeleton_table(df) {
 }
 
 function skeleton_field(df) {
-	// Same rule as base_input.js: a description shows under the field unless it is set to
-	// open on click. Descriptions are meta text, so they render as HTML like the real ones.
-	const description =
-		df.description && !df.show_description_on_click
-			? `<div class="skeleton-help text-extra-muted">${__(
-					df.description,
-					null,
-					df.parent
-			  )}</div>`
-			: "";
+	// Same rule as base_input.js: a document's fields keep their own descriptions behind the
+	// info icon (put_description_behind_icon, fork only), and this is a document, so none
+	// shows under a field. Kept as a variable so the template below is unchanged.
+	const description = "";
 	// Table labels carry no marker in the form (the grid draws its own label).
 	const reqd = cint(df.reqd) && df.fieldtype !== "Table" ? " reqd" : "";
 

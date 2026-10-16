@@ -27,29 +27,31 @@ export class InfoCard {
 		});
 	}
 	make_card() {
-		const me = this;
 		this.$info_card = $("<div class='info-card'></div>").appendTo(this.label_span);
-		let card_args = {
+		this.card = new frappe.ui.Card({
 			title: "",
-			message: this.df.show_description_on_click
-				? __(this.df.description, null, this.df.parent) || ""
-				: "",
+			message: this.get_message(),
 			parent: this.$info_card,
 			trigger: $(this.label_span).find("svg").get(0),
 			close_button: true,
 			popper: true,
 			hide_icon: true,
 			custom_class: "py-1 px-1",
-		};
+		});
+	}
+	get_message() {
+		let message = this.df.show_description_on_click
+			? __(this.df.description, null, this.df.parent) || ""
+			: "";
 		if (this.df.documentation_url) {
 			if (this.df.description && this.df.show_description_on_click) {
-				card_args.message += "<br>";
+				message += "<br>";
 			}
-			card_args.message += `<a style="display: inline-block; text-underline-offset: 2px;" class="py-1" href="${
+			message += `<a style="display: inline-block; text-underline-offset: 2px;" class="py-1" href="${
 				this.df.documentation_url
 			}" target="_blank">${__("View Documentation")}</a>`;
 		}
-		this.card = new frappe.ui.Card(card_args);
+		return message;
 	}
 	setup_click() {
 		const me = this;
@@ -57,6 +59,9 @@ export class InfoCard {
 			.find(".info-trigger")
 			.on("click", (event) => {
 				event.preventDefault();
+				// read the description afresh: a form may change it after the card was made
+				// (set_df_property), and every field's own description opens here now (fork only)
+				me.card.card.find(".frappe-card-description").html(me.get_message());
 				me.card.toggle();
 			});
 		$(document).on("click", function (e) {

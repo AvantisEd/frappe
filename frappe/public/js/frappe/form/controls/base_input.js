@@ -132,6 +132,7 @@ frappe.ui.form.ControlInput = class ControlInput extends frappe.ui.form.Control 
 				}
 			}
 
+			me.put_description_behind_icon();
 			me.set_description();
 			me.set_label();
 			me.set_doc_url();
@@ -220,7 +221,42 @@ frappe.ui.form.ControlInput = class ControlInput extends frappe.ui.form.Control 
 		}
 	}
 
+	// A field's own description - the one its DocType gives it - sits behind the info icon beside
+	// its label wherever a document is shown (its form, or its preview in the side panel), as if
+	// Show Description on Click were ticked: the form reads as labels and values, and the
+	// explanation is one click away. Dialogs and web forms keep theirs inline, since there it is
+	// the instruction for the step at hand. Decided on refresh, once per docfield: a form swaps in
+	// a per-document copy of each docfield (Layout.attach_doc_and_docfields), and this has to run
+	// before set_description, ahead of anything (the Datetime control's time zone) appended to
+	// the description. Fork only (Avantis, 2026-10-16).
+	put_description_behind_icon() {
+		const df = this.df;
+		if (df.__description_behind_icon !== undefined) return;
+		const shows_a_document =
+			this.frm ||
+			(this.doc?.doctype &&
+				this.doc?.name &&
+				this.doctype !== "Web Form" &&
+				!this.layout?.is_dialog);
+		df.__description_behind_icon = Boolean(
+			!this.only_input && shows_a_document && df.description && !df.show_description_on_click
+		);
+		if (df.__description_behind_icon) {
+			df.show_description_on_click = 1;
+		}
+	}
 	set_description(description) {
+		// A message set at run time (an invalid barcode, "already exists") is news about the
+		// value, not an explanation of the field: it shows inline, and the field's own
+		// description stays behind the icon.
+		if (this.df.__description_behind_icon && description !== undefined) {
+			if (description) {
+				this.set_new_description(__(description));
+			} else {
+				this.set_empty_description();
+			}
+			return;
+		}
 		if (this.df.show_description_on_click) return;
 		if (description !== undefined) {
 			this.df.description = description;
