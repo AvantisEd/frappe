@@ -102,9 +102,12 @@ class FileUploader {
 					this.dialog.set_secondary_action_label(
 						all_private ? __("Set all public") : __("Set all private")
 					);
+					// AvantisEd: with no files the button has nothing to act on, and every() of an
+					// empty list read as "all private", so one click left it stuck on "Set all public"
+					this.dialog.get_secondary_btn().toggleClass("hide", !files.length);
 				}
 			},
-			{ deep: true }
+			{ deep: true, immediate: true }
 		);
 
 		watch(
