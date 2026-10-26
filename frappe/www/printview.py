@@ -17,6 +17,7 @@ from frappe.printing.doctype.print_format.classic_converter import (
 )
 from frappe.utils import cint, escape_html, flt, strip_html
 from frappe.utils.jinja_globals import is_rtl
+from frappe.utils.print_utils import chrome_for_wkhtmltopdf
 
 if TYPE_CHECKING:
 	from frappe.core.doctype.docfield.docfield import DocField
@@ -80,8 +81,8 @@ def get_context(context) -> PrintContext:
 		standalone = False
 
 	print_format_name = getattr(print_format, "name", "Standard")
-	pdf_generator = frappe.form_dict.get(
-		"pdf_generator", getattr(print_format, "pdf_generator", "wkhtmltopdf")
+	pdf_generator = chrome_for_wkhtmltopdf(
+		frappe.form_dict.get("pdf_generator", getattr(print_format, "pdf_generator", None))
 	)
 
 	context = {

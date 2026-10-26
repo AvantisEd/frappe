@@ -42,8 +42,13 @@ def resolve_pdf_generator(print_format=None, pdf_generator: str | None = None) -
 			return stored
 		return "chrome"
 	if pdf_generator is not None:
-		return pdf_generator
-	return (print_format and print_format.get("pdf_generator")) or "wkhtmltopdf"
+		return chrome_for_wkhtmltopdf(pdf_generator)
+	return chrome_for_wkhtmltopdf(print_format and print_format.get("pdf_generator"))
+
+
+def chrome_for_wkhtmltopdf(pdf_generator: str | None) -> str:
+	"""wkhtmltopdf is deprecated: a print that asks for it, or for no engine, prints with Chrome."""
+	return "chrome" if pdf_generator in (None, "", "wkhtmltopdf") else pdf_generator
 
 
 def renders_through_generator(print_format) -> bool:
@@ -78,7 +83,7 @@ def get_print(
 	:param style: Print Format style.
 	:param as_pdf: Return as PDF. Default False.
 	:param password: Password to encrypt the pdf with. Default None
-	:param pdf_generator: PDF generator to use. Default 'wkhtmltopdf'
+	:param pdf_generator: PDF generator to use. Default the print format's, else Chrome (wkhtmltopdf prints with Chrome)
 	"""
 
 	"""
@@ -97,6 +102,7 @@ def get_print(
 	generator = local.form_dict.get("pdf_generator")
 	if not generator or (uses_beta_renderer(pf_doc) and generator not in GENERATOR_ENGINES):
 		generator = resolve_pdf_generator(pf_doc, pdf_generator)
+	generator = chrome_for_wkhtmltopdf(generator)
 
 	original_form_dict = copy.deepcopy(local.form_dict)
 	try:

@@ -381,9 +381,6 @@ def download_pdf(
 	letterhead: str | None = None,
 	pdf_generator: Literal["wkhtmltopdf", "chrome", "Typst", "WeasyPrint"] | None = None,
 ):
-	if pdf_generator is None:
-		pdf_generator = "wkhtmltopdf"
-
 	doc = doc or frappe.get_doc(doctype, name)
 	validate_print_permission(doc)
 

@@ -40,7 +40,7 @@ class TestPrintFormat(IntegrationTestCase):
 			{"doctype": "Print Format", "doc_type": "ToDo", "print_format_builder": 1, "pdf_generator": None}
 		)
 		classic.onload()
-		self.assertEqual(classic.get_onload("pdf_generator"), "wkhtmltopdf")
+		self.assertEqual(classic.get_onload("pdf_generator"), "chrome")
 
 		beta = frappe.get_doc(
 			{
@@ -1253,11 +1253,13 @@ class TestWeasyPrintEngine(IntegrationTestCase):
 		self.assertEqual(resolve_pdf_generator(self.make_beta("WeasyPrint")), "WeasyPrint")
 		self.assertEqual(resolve_pdf_generator(self.make_beta("Typst")), "Typst")
 		self.assertEqual(resolve_pdf_generator(self.make_beta(), "wkhtmltopdf"), "chrome")
-		self.assertEqual(resolve_pdf_generator(None), "wkhtmltopdf")
+		self.assertEqual(resolve_pdf_generator(None), "chrome")
+		self.assertEqual(resolve_pdf_generator(None, "wkhtmltopdf"), "chrome")
+		self.assertEqual(resolve_pdf_generator(frappe._dict(pdf_generator="wkhtmltopdf")), "chrome")
 		self.assertEqual(resolve_pdf_generator(None, "chrome"), "chrome")
 		self.assertEqual(resolve_pdf_generator(frappe._dict(pdf_generator="chrome")), "chrome")
 		self.assertEqual(
-			resolve_pdf_generator(frappe._dict(pdf_generator="chrome"), "wkhtmltopdf"), "wkhtmltopdf"
+			resolve_pdf_generator(frappe._dict(pdf_generator="chrome"), "wkhtmltopdf"), "chrome"
 		)
 
 	def patch_legacy_render(self):
